@@ -15,7 +15,6 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-from api.services.langfuse_client import observed
 from api.utils.prompts import load_prompt
 
 QA_RUBRIC: list[dict[str, Any]] = [
@@ -75,25 +74,18 @@ _RUBRIC_WEIGHTS = {r["id"]: r["weight"] for r in QA_RUBRIC}
 
 async def score_call(transcript: str, client: AsyncOpenAI | None = None) -> dict:
     client = client or AsyncOpenAI()
-    with observed("qa_scoring") as span:
-        response = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            temperature=0,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": load_prompt("qa_rubric_prompt.txt")},
-                {"role": "user", "content": f"RUBRIC:\n{_RUBRIC_TEXT}\n\nTRANSCRIPT:\n{transcript}"},
-            ],
-        )
-        content = response.choices[0].message.content
-        breakdown = json.loads(content).get("results", [])
-        score = weighted_score(breakdown)
-        span.update(
-            input={"transcript": transcript},
-            output={"score": score, "breakdown": breakdown},
-            model="gpt-4o-mini",
-        )
-        return {"score": score, "breakdown": breakdown}
+    response = await client.chat.completions.create(
+        model="gpt-4o-mini",
+        temperature=0,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": load_prompt("qa_rubric_prompt.txt")},
+            {"role": "user", "content": f"RUBRIC:\n{_RUBRIC_TEXT}\n\nTRANSCRIPT:\n{transcript}"},
+        ],
+    )
+    content = response.choices[0].message.content
+    breakdown = json.loads(content).get("results", [])
+    return {"score": weighted_score(breakdown), "breakdown": breakdown}
 
 
 def weighted_score(breakdown: list[dict]) -> float | None:

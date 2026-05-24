@@ -22,7 +22,7 @@ from api.models.interaction import InteractionLog
 from api.models.webhook import VAPIEvent
 from api.services.airtable import write_interaction
 from api.services.email_alert import send_alert
-from api.services.langfuse_client import observed, trace_pipeline
+from api.services.langfuse_client import get_openai_client, trace_pipeline
 from api.services.qa_scorer import score_call
 from api.utils.prompts import load_prompt
 
@@ -32,76 +32,94 @@ logger = logging.getLogger(__name__)
 
 
 async def run_post_call_pipeline(event: VAPIEvent) -> None:
+    call_id = event.call.id
     transcript = extract_transcript(event)
     if not transcript:
-        logger.warning("post-call pipeline received event with no transcript; skipping")
+        logger.warning("pipeline: skipped (no transcript) call_id=%s", call_id)
         return
 
     caller_airtable_id = extract_airtable_id(event)
     duration = int(event.call.duration_seconds or event.duration_seconds or 0)
+    logger.info(
+        "pipeline: start call_id=%s duration=%ss transcript_chars=%d caller_link=%s",
+        call_id, duration, len(transcript), caller_airtable_id or "none",
+    )
 
-    client = AsyncOpenAI()
-    with trace_pipeline(event.call.id) as trace:
+    client = get_openai_client()
+    with trace_pipeline(call_id) as trace:
         try:
-            analysis = await analyze_transcript(transcript, client)
+            llm_analysis = await analyze_transcript(transcript, client)
+            logger.info(
+                "pipeline: analysis call_id=%s sentiment=%s intent=%s authenticated=%s escalated=%s caller_name=%s",
+                call_id,
+                llm_analysis.get("sentiment"),
+                llm_analysis.get("intent"),
+                llm_analysis.get("authenticated"),
+                llm_analysis.get("escalated"),
+                llm_analysis.get("caller_name"),
+            )
             qa = await score_call(transcript, client)
+            logger.info(
+                "pipeline: qa call_id=%s score=%s n_items=%d",
+                call_id, qa["score"], len(qa["breakdown"]),
+            )
         except Exception:
-            logger.exception("LLM analysis failed; aborting pipeline for call %s", event.call.id)
+            logger.exception("pipeline: LLM step failed; aborting call_id=%s", call_id)
             return
 
         log = InteractionLog(
             caller_airtable_id=caller_airtable_id,
             timestamp=datetime.now(UTC),
-            authenticated=bool(analysis.get("authenticated", False)),
+            authenticated=bool(llm_analysis.get("authenticated", False)),
             call_duration_seconds=duration,
             transcript=transcript,
-            summary=analysis.get("summary", ""),
-            sentiment=analysis.get("sentiment", "neutral"),
-            sentiment_arc=json.dumps(analysis.get("sentiment_arc", [])),
-            detected_intent=analysis.get("intent", "other"),
+            summary=llm_analysis.get("summary", ""),
+            sentiment=llm_analysis.get("sentiment", "neutral"),
+            sentiment_arc=json.dumps(llm_analysis.get("sentiment_arc", [])),
+            detected_intent=llm_analysis.get("intent", "other"),
             qa_score=qa["score"],
             qa_breakdown=json.dumps(qa["breakdown"]),
-            topics_mentioned=analysis.get("topics_mentioned", []),
-            escalated=bool(analysis.get("escalated", False)),
+            topics_mentioned=llm_analysis.get("topics_mentioned", []),
+            escalated=bool(llm_analysis.get("escalated", False)),
             langfuse_trace_url=trace.url,
         )
 
         try:
-            await write_interaction(log)
+            record_id = await write_interaction(log)
+            logger.info("pipeline: airtable write OK call_id=%s record_id=%s", call_id, record_id)
         except Exception:
-            logger.exception("failed to write interaction to Airtable for call %s", event.call.id)
+            logger.exception("pipeline: airtable write failed call_id=%s", call_id)
 
         if should_alert(qa["score"], log.sentiment):
             try:
                 await send_alert(
-                    caller_name=analysis.get("caller_name"),
+                    caller_name=llm_analysis.get("caller_name"),
                     sentiment=log.sentiment,
                     qa_score=qa["score"],
                     summary=log.summary,
                     trace_url=trace.url,
                 )
+                logger.info(
+                    "pipeline: alert sent call_id=%s reason=%s",
+                    call_id,
+                    "negative_sentiment" if log.sentiment == "negative" else "low_qa_score",
+                )
             except Exception:
-                logger.exception("failed to send email alert for call %s", event.call.id)
+                logger.exception("pipeline: alert send failed call_id=%s", call_id)
+        logger.info("pipeline: done call_id=%s trace_url=%s", call_id, trace.url)
 
 
 async def analyze_transcript(transcript: str, client: AsyncOpenAI) -> dict:
-    with observed("analyze_transcript") as span:
-        response = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            temperature=0,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": load_prompt("analysis_prompt.txt")},
-                {"role": "user", "content": f"TRANSCRIPT:\n{transcript}"},
-            ],
-        )
-        content = response.choices[0].message.content
-        span.update(
-            input={"transcript": transcript},
-            output=content,
-            model="gpt-4o-mini",
-        )
-        return json.loads(content)
+    response = await client.chat.completions.create(
+        model="gpt-4o-mini",
+        temperature=0,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": load_prompt("analysis_prompt.txt")},
+            {"role": "user", "content": f"TRANSCRIPT:\n{transcript}"},
+        ],
+    )
+    return json.loads(response.choices[0].message.content)
 
 
 def should_alert(qa_score: float | None, sentiment: str) -> bool:

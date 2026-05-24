@@ -1,20 +1,26 @@
-"""Langfuse LLM-trace wrapper.
+"""Langfuse LLM-trace integration.
 
-Exposes one context manager `trace_pipeline(call_id)` that yields an object
-with a `.url` pointing at the Langfuse trace view (so we can deep-link from
-Airtable + email alerts), plus `observed(name)` for wrapping individual LLM
-calls as child spans.
+Strategy (v3):
+  - Initialize a singleton Langfuse client at first use.
+  - For every LLM call, use `langfuse.openai.AsyncOpenAI` which is a drop-in
+    replacement for `openai.AsyncOpenAI` that auto-captures input, output,
+    model, latency and token usage as observation spans.
+  - Wrap the whole pipeline in `trace_pipeline(call_id)` so the auto-traced
+    OpenAI spans roll up as children of one named trace per call, and so
+    we can resolve a deep-link URL to store on the Airtable row.
 
-When Langfuse isn't configured (env vars unset or LANGFUSE_ENABLED=false),
-both helpers become no-ops yielding a TraceHandle with url=None. This
-keeps the pipeline code path identical between prod and tests.
+When Langfuse isn't configured (env unset or LANGFUSE_ENABLED=false) both
+helpers no-op — the pipeline runs unchanged.
 """
 
 import logging
 import os
-from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -26,20 +32,6 @@ _client_init_attempted = False
 @dataclass
 class TraceHandle:
     url: str | None = None
-
-
-@dataclass
-class SpanHandle:
-    """Subset of langfuse Span surface we use, plus a no-op fallback."""
-
-    _span: object | None = None
-
-    def update(self, **kwargs) -> None:
-        if self._span is not None:
-            try:
-                self._span.update(**kwargs)
-            except Exception:
-                logger.exception("langfuse span.update failed")
 
 
 def _is_enabled() -> bool:
@@ -54,6 +46,7 @@ def _get_client():
         return _client
     _client_init_attempted = True
     if not _is_enabled():
+        logger.info("langfuse: disabled (LANGFUSE_ENABLED=false or required env vars missing)")
         return None
     try:
         from langfuse import Langfuse
@@ -62,60 +55,74 @@ def _get_client():
             secret_key=os.environ["LANGFUSE_SECRET_KEY"],
             host=os.environ["LANGFUSE_HOST"],
         )
+        logger.info("langfuse: client initialized host=%s", os.environ["LANGFUSE_HOST"])
     except Exception:
-        logger.exception("failed to initialize Langfuse client; tracing disabled")
+        logger.exception("langfuse: client init failed; tracing disabled")
         _client = None
     return _client
 
 
 def reset_for_tests() -> None:
-    """Drop the cached client so env-var changes take effect mid-test."""
     global _client, _client_init_attempted
     _client = None
     _client_init_attempted = False
 
 
+def get_openai_client() -> "AsyncOpenAI":
+    """Return an AsyncOpenAI client. When Langfuse is enabled, the returned
+    client is `langfuse.openai.AsyncOpenAI` which auto-instruments every
+    chat completion call as a Langfuse generation span."""
+    client = _get_client()
+    if client is not None:
+        try:
+            from langfuse.openai import AsyncOpenAI as TracedAsyncOpenAI
+            logger.debug("langfuse: returning traced AsyncOpenAI client")
+            return TracedAsyncOpenAI()
+        except Exception:
+            logger.exception("langfuse: failed to import langfuse.openai; using plain client")
+    from openai import AsyncOpenAI
+    return AsyncOpenAI()
+
+
 @contextmanager
-def trace_pipeline(call_id: str) -> Iterator[TraceHandle]:
+def trace_pipeline(call_id: str):
+    """Open a named Langfuse trace for the duration of the with-block.
+    Any langfuse.openai LLM calls inside become child spans automatically.
+    Yields a TraceHandle whose `.url` is the deep-link to the trace view."""
     handle = TraceHandle()
     client = _get_client()
     if client is None:
         yield handle
         return
 
+    span = None
     try:
-        with client.start_as_current_span(name="post_call_pipeline") as span:
-            try:
-                span.update_trace(name=f"call_{call_id}", tags=["claims-agent"])
-                handle.url = _build_trace_url(client, span)
-            except Exception:
-                logger.exception("failed to set trace metadata; continuing")
-            yield handle
+        span = client.start_as_current_span(name="post_call_pipeline")
+        span.__enter__()
+        try:
+            span.update_trace(name=f"call_{call_id}", tags=["claims-agent"])
+        except Exception:
+            logger.exception("langfuse: update_trace failed; continuing")
+        handle.url = _build_trace_url(client, span)
+        logger.info("langfuse: trace started call_id=%s url=%s", call_id, handle.url)
+        yield handle
+    except Exception:
+        logger.exception("langfuse: trace_pipeline raised")
+        yield handle
     finally:
+        if span is not None:
+            try:
+                span.__exit__(None, None, None)
+            except Exception:
+                logger.exception("langfuse: span exit failed")
         try:
             client.flush()
+            logger.debug("langfuse: flushed call_id=%s", call_id)
         except Exception:
-            logger.exception("langfuse flush failed")
-
-
-@contextmanager
-def observed(name: str) -> Iterator[SpanHandle]:
-    """Wrap a child operation in a span. No-op if Langfuse is off or no
-    enclosing trace is active."""
-    client = _get_client()
-    if client is None:
-        yield SpanHandle()
-        return
-    try:
-        with client.start_as_current_span(name=name) as span:
-            yield SpanHandle(_span=span)
-    except Exception:
-        logger.exception("langfuse span failed; continuing")
-        yield SpanHandle()
+            logger.exception("langfuse: flush failed")
 
 
 def _build_trace_url(client, span) -> str | None:
-    """Try a couple of known SDK shapes for resolving the trace URL."""
     trace_id = getattr(span, "trace_id", None)
     if not trace_id:
         return None

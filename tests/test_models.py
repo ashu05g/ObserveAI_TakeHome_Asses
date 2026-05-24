@@ -139,11 +139,14 @@ class TestVAPIWebhookPayload:
         assert msgs[1].name == "lookup_caller"
         assert msgs[1].tool_call_id == "call_xyz"
 
-    def test_rejects_unknown_event_type(self):
-        with pytest.raises(ValidationError):
-            VAPIWebhookPayload.model_validate(
-                {"message": {"type": "definitely-not-a-vapi-event", "call": {"id": "x"}}}
-            )
+    def test_accepts_any_event_type(self):
+        # VAPI's event-type list is open-ended (assistant-request,
+        # model-output, user-interrupted, ...). The router decides what to
+        # do with each; the model just parses.
+        payload = VAPIWebhookPayload.model_validate(
+            {"message": {"type": "user-interrupted", "call": {"id": "x"}}}
+        )
+        assert payload.message.type == "user-interrupted"
 
     def test_ignores_extra_top_level_fields(self):
         payload = VAPIWebhookPayload.model_validate(

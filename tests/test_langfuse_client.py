@@ -3,8 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from api.services.langfuse_client import (
-    SpanHandle,
-    observed,
+    get_openai_client,
     reset_for_tests,
     trace_pipeline,
 )
@@ -18,15 +17,15 @@ class TestDisabledMode:
         with trace_pipeline("call_abc") as handle:
             assert handle.url is None
 
-    def test_observed_yields_noop_span(self):
-        with observed("anything") as span:
-            assert isinstance(span, SpanHandle)
-            # should not raise
-            span.update(foo="bar", model="gpt-4o-mini")
+    def test_get_openai_client_returns_plain_client(self):
+        from openai import AsyncOpenAI as PlainAsyncOpenAI
+        client = get_openai_client()
+        assert isinstance(client, PlainAsyncOpenAI)
 
-    def test_no_langfuse_client_imported(self, monkeypatch):
-        # Make `from langfuse import Langfuse` raise if it ever executes
-        # — proves _get_client() short-circuits.
+    def test_no_langfuse_client_imported(self):
+        # If `from langfuse import Langfuse` is ever executed, this patch
+        # would have replaced the langfuse module with None and the import
+        # would raise. trace_pipeline must short-circuit before that.
         with (
             patch.dict("sys.modules", {"langfuse": None}),
             trace_pipeline("call_abc") as handle,
@@ -37,8 +36,8 @@ class TestDisabledMode:
 class TestEnabledMode:
     @pytest.fixture
     def fake_langfuse_module(self, monkeypatch):
-        """Inject a stub `langfuse` module so _get_client succeeds without
-        making network calls."""
+        """Inject a stub `langfuse` module so the Langfuse client init
+        succeeds without making network calls."""
         monkeypatch.setenv("LANGFUSE_ENABLED", "true")
         reset_for_tests()
 
@@ -70,11 +69,52 @@ class TestEnabledMode:
             pass
         fake_client.flush.assert_called_once()
 
-    def test_observed_passes_update_to_span(self, fake_langfuse_module):
+    def test_trace_pipeline_calls_update_trace(self, fake_langfuse_module):
         _, fake_span = fake_langfuse_module
-        with observed("analyze_transcript") as span:
-            span.update(output="x", model="gpt-4o-mini")
-        fake_span.update.assert_called_with(output="x", model="gpt-4o-mini")
+        with trace_pipeline("call_xyz"):
+            pass
+        fake_span.update_trace.assert_called_with(
+            name="call_call_xyz", tags=["claims-agent"]
+        )
+
+    def test_get_openai_client_returns_traced_when_available(self, monkeypatch):
+        """When langfuse.openai is importable, get_openai_client returns
+        the traced AsyncOpenAI."""
+        monkeypatch.setenv("LANGFUSE_ENABLED", "true")
+        reset_for_tests()
+
+        fake_traced_client = MagicMock(name="TracedAsyncOpenAI_instance")
+        fake_traced_class = MagicMock(return_value=fake_traced_client)
+
+        fake_langfuse_module = MagicMock()
+        fake_langfuse_module.Langfuse = MagicMock(return_value=MagicMock())
+
+        fake_openai_module = MagicMock()
+        fake_openai_module.AsyncOpenAI = fake_traced_class
+
+        modules = __import__("sys").modules
+        monkeypatch.setitem(modules, "langfuse", fake_langfuse_module)
+        monkeypatch.setitem(modules, "langfuse.openai", fake_openai_module)
+
+        client = get_openai_client()
+        assert client is fake_traced_client
+        reset_for_tests()
+
+    def test_falls_back_to_plain_openai_if_traced_import_fails(self, monkeypatch):
+        monkeypatch.setenv("LANGFUSE_ENABLED", "true")
+        reset_for_tests()
+
+        fake_langfuse_module = MagicMock()
+        fake_langfuse_module.Langfuse = MagicMock(return_value=MagicMock())
+
+        modules = __import__("sys").modules
+        monkeypatch.setitem(modules, "langfuse", fake_langfuse_module)
+        monkeypatch.setitem(modules, "langfuse.openai", None)
+
+        from openai import AsyncOpenAI as PlainAsyncOpenAI
+        client = get_openai_client()
+        assert isinstance(client, PlainAsyncOpenAI)
+        reset_for_tests()
 
     def test_falls_back_to_host_url_when_get_trace_url_missing(self, monkeypatch):
         monkeypatch.setenv("LANGFUSE_ENABLED", "true")
@@ -120,7 +160,7 @@ class TestEnvGating:
             assert handle.url is None
         reset_for_tests()
 
-    def test_explicit_disabled_overrides_present_keys(self, monkeypatch):
+    def test_explicit_disabled_overrides_present_keys(self):
         # Keys are present (from autouse fixture) but LANGFUSE_ENABLED=false
         # (also from autouse) — handle must come back empty.
         with trace_pipeline("c") as handle:

@@ -69,6 +69,9 @@ async def write_interaction(log: InteractionLog) -> str:
         fields["caller"] = [log.caller_airtable_id]
 
     async with _client() as client:
-        response = await client.post(f"/{table}", json={"fields": fields})
+        response = await client.post(
+            f"/{table}",
+            json={"fields": fields, "typecast": True},
+        )
         response.raise_for_status()
         return response.json()["id"]

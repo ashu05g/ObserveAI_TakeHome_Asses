@@ -46,6 +46,10 @@ async def lifespan(_: FastAPI):
         raise RuntimeError(
             f"Required environment variables are not set: {', '.join(missing)}"
         )
+    # Warm Langfuse so init failures surface in startup logs, not on the
+    # first webhook.
+    from api.services.langfuse_client import _get_client
+    _get_client()
     yield
 
 

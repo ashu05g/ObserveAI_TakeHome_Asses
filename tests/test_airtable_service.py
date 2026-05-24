@@ -119,16 +119,21 @@ class TestWriteInteraction:
 
         body = route.calls.last.request.read().decode()
         import json
-        sent = json.loads(body)["fields"]
+        sent = json.loads(body)
+        # typecast lets Airtable auto-create new singleSelect/multipleSelects
+        # option values, so the LLM can emit any sentiment/intent/topic
+        # without an upfront schema sync.
+        assert sent["typecast"] is True
 
-        assert sent["timestamp"] == "2026-05-24T12:00:00"
-        assert sent["authenticated"] is True
-        assert sent["call_duration_seconds"] == 180
-        assert sent["sentiment"] == "positive"
-        assert sent["detected_intent"] == "claim_status"
-        assert sent["qa_score"] == 0.92
-        assert sent["caller"] == ["recJaneDoe"]
-        assert sent["langfuse_trace_url"] == "https://us.cloud.langfuse.com/trace/abc"
+        fields = sent["fields"]
+        assert fields["timestamp"] == "2026-05-24T12:00:00"
+        assert fields["authenticated"] is True
+        assert fields["call_duration_seconds"] == 180
+        assert fields["sentiment"] == "positive"
+        assert fields["detected_intent"] == "claim_status"
+        assert fields["qa_score"] == 0.92
+        assert fields["caller"] == ["recJaneDoe"]
+        assert fields["langfuse_trace_url"] == "https://us.cloud.langfuse.com/trace/abc"
 
     @respx.mock
     async def test_omits_qa_score_when_none(self):
@@ -140,6 +145,8 @@ class TestWriteInteraction:
 
         import json
         sent = json.loads(route.calls.last.request.read())["fields"]
+        # `typecast: true` is also expected at the request root (covered
+        # in detail in test_sends_all_required_fields)
         assert "qa_score" not in sent
 
     @respx.mock
@@ -154,6 +161,8 @@ class TestWriteInteraction:
 
         import json
         sent = json.loads(route.calls.last.request.read())["fields"]
+        # `typecast: true` is also expected at the request root (covered
+        # in detail in test_sends_all_required_fields)
         assert "caller" not in sent
         assert sent["authenticated"] is False
 
@@ -167,6 +176,8 @@ class TestWriteInteraction:
 
         import json
         sent = json.loads(route.calls.last.request.read())["fields"]
+        # `typecast: true` is also expected at the request root (covered
+        # in detail in test_sends_all_required_fields)
         assert "langfuse_trace_url" not in sent
 
     @respx.mock

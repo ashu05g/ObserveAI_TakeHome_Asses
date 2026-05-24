@@ -57,22 +57,34 @@ async def lookup_caller(
 
 async def _resolve_lookup(phone: str | None) -> dict:
     if not phone:
+        logger.info("lookup: missing phone argument")
         return {"found": False, "error": "missing phone argument"}
 
     try:
         normalized = normalize_phone(phone)
     except InvalidPhoneNumber as exc:
+        logger.info("lookup: invalid phone raw=%r reason=%s", phone, exc)
         return {"found": False, "error": str(exc)}
 
+    logger.info("lookup: querying airtable raw=%r normalized=%s", phone, normalized)
     try:
         caller = await get_caller_by_phone(normalized)
     except Exception:
-        logger.exception("Airtable lookup failed for phone %s", normalized)
+        logger.exception("lookup: airtable failure for phone=%s", normalized)
         return {"found": False, "error": "lookup service unavailable"}
 
     if caller is None:
+        logger.info("lookup: MISS phone=%s", normalized)
         return {"found": False}
 
+    logger.info(
+        "lookup: HIT phone=%s name=%s claim=%s status=%s airtable_id=%s",
+        normalized,
+        caller.full_name,
+        caller.claim_id,
+        caller.claim_status,
+        caller.airtable_id,
+    )
     return {
         "found": True,
         "first_name": caller.first_name,

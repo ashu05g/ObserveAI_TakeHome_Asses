@@ -234,7 +234,7 @@ class TestRunPostCallPipeline:
                     {"id": "authentication", "applicable": True, "score": 1},
                 ]}),
             )
-        monkeypatch.setattr(analysis, "AsyncOpenAI", _factory)
+        monkeypatch.setattr(analysis, "get_openai_client", _factory)
 
     @respx.mock
     async def test_happy_path_writes_interaction_no_alert(self, patched_openai):
@@ -271,7 +271,7 @@ class TestRunPostCallPipeline:
     async def test_negative_sentiment_triggers_alert(self, monkeypatch):
         monkeypatch.setattr(
             analysis,
-            "AsyncOpenAI",
+            "get_openai_client",
             lambda: _fake_openai(
                 _analysis_json(sentiment="negative", summary="Caller frustrated."),
                 json.dumps({"results": [
@@ -298,7 +298,7 @@ class TestRunPostCallPipeline:
     async def test_low_qa_score_triggers_alert(self, monkeypatch):
         monkeypatch.setattr(
             analysis,
-            "AsyncOpenAI",
+            "get_openai_client",
             lambda: _fake_openai(
                 _analysis_json(sentiment="positive"),
                 json.dumps({"results": [
@@ -344,7 +344,7 @@ class TestRunPostCallPipeline:
 
         await run_post_call_pipeline(_event())
 
-        assert "failed to write interaction" in caplog.text
+        assert "airtable write failed" in caplog.text
 
     @respx.mock
     async def test_llm_failure_aborts_pipeline(self, monkeypatch, caplog):
@@ -353,12 +353,12 @@ class TestRunPostCallPipeline:
             client.chat.completions.create = AsyncMock(side_effect=RuntimeError("api down"))
             return client
 
-        monkeypatch.setattr(analysis, "AsyncOpenAI", _broken_factory)
+        monkeypatch.setattr(analysis, "get_openai_client", _broken_factory)
         airtable_post = respx.post(
             "https://api.airtable.com/v0/appTest1234567890/interactions"
         ).respond(200, json={"id": "recX"})
 
         await run_post_call_pipeline(_event())
 
-        assert "LLM analysis failed" in caplog.text
+        assert "LLM step failed" in caplog.text
         assert airtable_post.called is False

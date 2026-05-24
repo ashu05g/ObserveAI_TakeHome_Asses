@@ -89,7 +89,7 @@ class TestWebhookDispatch:
         assert response.json() == {"status": "ignored", "type": "status-update"}
         assert captured_pipeline_calls == []
 
-    def test_rejects_unknown_event_type(self, client, captured_pipeline_calls):
+    def test_ignores_unknown_event_type(self, client, captured_pipeline_calls):
         payload = _end_of_call_payload()
         payload["message"]["type"] = "made-up-event"
 
@@ -99,7 +99,8 @@ class TestWebhookDispatch:
             headers={"X-VAPI-Secret": VALID_SECRET},
         )
 
-        assert response.status_code == 422
+        assert response.status_code == 200
+        assert response.json() == {"status": "ignored", "type": "made-up-event"}
         assert captured_pipeline_calls == []
 
     def test_rejects_malformed_payload(self, client, captured_pipeline_calls):

@@ -1,12 +1,14 @@
 """VAPI webhook payload model.
 
-VAPI wraps every server-URL event under a top-level `message` field. We model
-only the fields the post-call pipeline needs; everything else is ignored.
-Schemas across VAPI event types overlap heavily, so we keep a single permissive
-model and branch on `message.type` in the router.
+VAPI wraps every server-URL event under a top-level `message` field, and the
+catalog of event types is open-ended (assistant-request, transcript,
+status-update, end-of-call-report, model-output, tool-calls, hang,
+user-interrupted, ...). We accept any string `type` and let the router
+branch — only `end-of-call-report` triggers the post-call pipeline; the
+rest are ignored.
 """
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -35,16 +37,7 @@ class VAPIEvent(BaseModel):
 
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
-    type: Literal[
-        "end-of-call-report",
-        "status-update",
-        "transcript",
-        "function-call",
-        "hang",
-        "speech-update",
-        "conversation-update",
-        "tool-calls",
-    ]
+    type: str
     call: VAPICall
     transcript: str | None = None
     summary: str | None = None
