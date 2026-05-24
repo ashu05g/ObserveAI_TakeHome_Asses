@@ -166,14 +166,15 @@ In the VAPI dashboard:
    - Voice: 11Labs, model `eleven_flash_v2_5`, voice `Rachel`
    - First Message: `"Thank you for calling Observe Insurance. My name is Claire, and I'm here to help you with your claim. To get started, could you please provide me with the phone number associated with your account?"`
 3. **Tools** → **Create Tool** → `lookup_caller`:
-   - Type: Function
+   - Type: Function (VAPI always POSTs to function tools — no method selector)
    - Server URL: `<your-railway-or-ngrok-url>/lookup`
-   - Method: GET
    - Parameters: `phone` (string, required)
    - Description: `"Look up a caller's account and claim information using their phone number. Call this immediately after the caller provides their phone number."`
-   - Attach to the assistant.
-4. **Assistant → Server URL**: `<your-railway-or-ngrok-url>/webhook`
    - **Custom Headers** → add `X-VAPI-Secret: <your VAPI_WEBHOOK_SECRET value>`
+   - Attach to the assistant.
+4. **Assistant → Server URL**: `<your-railway-or-ngrok-url>/webhook` (must be the `/webhook` path, not `/` or `/health`)
+   - **Custom Headers** → add `X-VAPI-Secret: <your VAPI_WEBHOOK_SECRET value>`
+   - **Server Messages**: enable `end-of-call-report`
 
 ### 7. Test calls
 

@@ -1,9 +1,14 @@
+import json
+from urllib.parse import parse_qs, urlparse
+
 import pytest
 import respx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from api.routers.lookup import router as lookup_router
+
+VALID_SECRET = "test-secret-do-not-use-in-prod"
 
 
 @pytest.fixture
@@ -13,7 +18,9 @@ def client():
     return TestClient(app)
 
 
-def _caller_response():
+def _caller_response(found_count: int = 1):
+    if found_count == 0:
+        return {"records": []}
     return {
         "records": [
             {
@@ -32,18 +39,62 @@ def _caller_response():
     }
 
 
-class TestLookupEndpoint:
+def _tool_payload(phone: str, *, function_name: str = "lookup_caller", arguments=None, call_id: str = "call_abc"):
+    if arguments is None:
+        arguments = json.dumps({"phone": phone})
+    return {
+        "message": {
+            "type": "tool-calls",
+            "toolCalls": [
+                {
+                    "id": call_id,
+                    "function": {
+                        "name": function_name,
+                        "arguments": arguments,
+                    },
+                }
+            ],
+        }
+    }
+
+
+def _post(client, body):
+    return client.post(
+        "/lookup",
+        json=body,
+        headers={"X-VAPI-Secret": VALID_SECRET},
+    )
+
+
+class TestLookupAuth:
+    def test_rejects_missing_secret(self, client):
+        response = client.post("/lookup", json=_tool_payload("+14155550001"))
+        assert response.status_code == 401
+
+    def test_rejects_wrong_secret(self, client):
+        response = client.post(
+            "/lookup",
+            json=_tool_payload("+14155550001"),
+            headers={"X-VAPI-Secret": "nope"},
+        )
+        assert response.status_code == 401
+
+
+class TestLookupSuccess:
     @respx.mock
-    def test_hit_returns_caller_payload(self, client):
+    def test_hit_returns_caller_in_results(self, client):
         respx.get(
             "https://api.airtable.com/v0/appTest1234567890/callers"
         ).respond(200, json=_caller_response())
 
-        response = client.get("/lookup", params={"phone": "(415) 555-0001"})
+        response = _post(client, _tool_payload("(415) 555-0001"))
 
         assert response.status_code == 200
         body = response.json()
-        assert body == {
+        assert len(body["results"]) == 1
+        result = body["results"][0]
+        assert result["toolCallId"] == "call_abc"
+        assert result["result"] == {
             "found": True,
             "first_name": "Jane",
             "last_name": "Doe",
@@ -58,34 +109,123 @@ class TestLookupEndpoint:
     def test_miss_returns_found_false(self, client):
         respx.get(
             "https://api.airtable.com/v0/appTest1234567890/callers"
-        ).respond(200, json={"records": []})
+        ).respond(200, json=_caller_response(found_count=0))
 
-        response = client.get("/lookup", params={"phone": "+19999999999"})
+        response = _post(client, _tool_payload("+19999999999"))
 
         assert response.status_code == 200
-        assert response.json() == {"found": False}
-
-    def test_invalid_phone_returns_400(self, client):
-        response = client.get("/lookup", params={"phone": "not-a-phone"})
-        assert response.status_code == 400
-        assert "expected a 10-digit" in response.json()["detail"]
-
-    def test_missing_phone_returns_422(self, client):
-        response = client.get("/lookup")
-        assert response.status_code == 422
-
-    def test_empty_phone_returns_422(self, client):
-        response = client.get("/lookup", params={"phone": ""})
-        assert response.status_code == 422
+        assert response.json()["results"][0]["result"] == {"found": False}
 
     @respx.mock
-    def test_normalizes_before_querying_airtable(self, client):
+    def test_accepts_dict_arguments(self, client):
+        respx.get(
+            "https://api.airtable.com/v0/appTest1234567890/callers"
+        ).respond(200, json=_caller_response())
+
+        response = _post(
+            client,
+            _tool_payload("+14155550001", arguments={"phone": "+14155550001"}),
+        )
+        assert response.status_code == 200
+        assert response.json()["results"][0]["result"]["found"] is True
+
+    @respx.mock
+    def test_normalizes_phone_before_lookup(self, client):
         route = respx.get(
             "https://api.airtable.com/v0/appTest1234567890/callers"
         ).respond(200, json=_caller_response())
 
-        client.get("/lookup", params={"phone": "415.555.0001"})
+        _post(client, _tool_payload("415.555.0001"))
 
-        from urllib.parse import parse_qs, urlparse
         query = parse_qs(urlparse(str(route.calls.last.request.url)).query)
         assert query["filterByFormula"] == ["{phone}='+14155550001'"]
+
+
+class TestLookupErrors:
+    def test_invalid_phone_returns_200_with_error_payload(self, client):
+        # Per VAPI: non-2xx aborts the call. We surface the error inside
+        # the result so the LLM can read it and ask the caller to retry.
+        response = _post(client, _tool_payload("not-a-phone"))
+
+        assert response.status_code == 200
+        result = response.json()["results"][0]["result"]
+        assert result["found"] is False
+        assert "expected a 10-digit" in result["error"]
+
+    def test_missing_phone_argument_returns_error(self, client):
+        response = _post(client, _tool_payload(phone="", arguments={}))
+        assert response.status_code == 200
+        result = response.json()["results"][0]["result"]
+        assert result["found"] is False
+        assert "missing phone" in result["error"]
+
+    def test_unknown_function_name_returns_error(self, client):
+        response = _post(
+            client,
+            _tool_payload("+14155550001", function_name="do_something_else"),
+        )
+        assert response.status_code == 200
+        result = response.json()["results"][0]["result"]
+        assert "unsupported function" in result["error"]
+
+    @respx.mock
+    def test_airtable_failure_returns_200_with_error(self, client):
+        respx.get(
+            "https://api.airtable.com/v0/appTest1234567890/callers"
+        ).respond(500, json={"error": "boom"})
+
+        response = _post(client, _tool_payload("+14155550001"))
+        assert response.status_code == 200
+        result = response.json()["results"][0]["result"]
+        assert result["found"] is False
+        assert "unavailable" in result["error"]
+
+    def test_malformed_arguments_string_treated_as_missing(self, client):
+        response = _post(
+            client,
+            _tool_payload("ignored", arguments="not valid json"),
+        )
+        assert response.status_code == 200
+        result = response.json()["results"][0]["result"]
+        assert "missing phone" in result["error"]
+
+
+class TestMultipleToolCallsInOnePayload:
+    @respx.mock
+    def test_resolves_each_call_independently(self, client):
+        respx.get(
+            "https://api.airtable.com/v0/appTest1234567890/callers"
+        ).mock(side_effect=[
+            respx.MockResponse(200, json=_caller_response()),
+            respx.MockResponse(200, json=_caller_response(found_count=0)),
+        ])
+
+        body = {
+            "message": {
+                "type": "tool-calls",
+                "toolCalls": [
+                    {
+                        "id": "call_1",
+                        "function": {
+                            "name": "lookup_caller",
+                            "arguments": json.dumps({"phone": "+14155550001"}),
+                        },
+                    },
+                    {
+                        "id": "call_2",
+                        "function": {
+                            "name": "lookup_caller",
+                            "arguments": json.dumps({"phone": "+19999999999"}),
+                        },
+                    },
+                ],
+            }
+        }
+        response = _post(client, body)
+
+        results = response.json()["results"]
+        assert len(results) == 2
+        assert results[0]["toolCallId"] == "call_1"
+        assert results[0]["result"]["found"] is True
+        assert results[1]["toolCallId"] == "call_2"
+        assert results[1]["result"]["found"] is False
