@@ -215,7 +215,7 @@ class TestAnalyzeTranscript:
         assert result["sentiment"] == "positive"
 
         kwargs = client.chat.completions.create.call_args.kwargs
-        assert kwargs["model"] == "gpt-4o-mini"
+        assert kwargs["model"] == "gpt-4.1-mini"
         assert kwargs["temperature"] == 0
         assert kwargs["response_format"] == {"type": "json_object"}
         user_msg = next(m for m in kwargs["messages"] if m["role"] == "user")

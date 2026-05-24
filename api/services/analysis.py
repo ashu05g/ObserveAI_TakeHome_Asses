@@ -111,7 +111,7 @@ async def run_post_call_pipeline(event: VAPIEvent) -> None:
 
 async def analyze_transcript(transcript: str, client: AsyncOpenAI) -> dict:
     response = await client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-4.1-mini",
         temperature=0,
         response_format={"type": "json_object"},
         messages=[

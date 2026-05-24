@@ -2,7 +2,7 @@
 
 Inbound voice AI agent for an insurance claims hotline. Built for the Observe.AI AI Agent Engineer take-home.
 
-Stack: **VAPI** (telephony + voice orchestration) · **Deepgram Nova-3** (STT) · **ElevenLabs Flash v2.5** (TTS) · **GPT-4o** (agent) · **GPT-4o-mini** (post-call analysis + QA scoring) · **FastAPI on Railway** · **Airtable** · **Langfuse** · **Resend** · **Retool**.
+Stack: **VAPI** (telephony + voice orchestration) · **Deepgram Nova-3** (STT) · **ElevenLabs Flash v2.5** (TTS) · **GPT-4.1** (agent) · **GPT-4.1-mini** (post-call analysis + QA scoring) · **FastAPI on Railway** · **Airtable** · **Langfuse** · **Resend** · **Retool**.
 
 ## What it does
 

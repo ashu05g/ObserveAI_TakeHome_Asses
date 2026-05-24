@@ -103,7 +103,7 @@ class TestScoreCall:
 
         client.chat.completions.create.assert_awaited_once()
         kwargs = client.chat.completions.create.call_args.kwargs
-        assert kwargs["model"] == "gpt-4o-mini"
+        assert kwargs["model"] == "gpt-4.1-mini"
         assert kwargs["temperature"] == 0
         assert kwargs["response_format"] == {"type": "json_object"}
 

@@ -8,8 +8,10 @@ Telephony audio arrives at 8 kHz with background noise, speaker overlap, and cli
 ### TTS — ElevenLabs Flash v2.5 (via VAPI)
 Flash v2.5 is ElevenLabs' lowest-latency model, with time-to-first-byte well under 100 ms. Human conversation has inter-turn gaps of 200–400 ms; with STT + LLM-first-token + TTS-TTFB the system stays under one second per turn, which sounds intentional rather than broken.
 
-### LLM split — GPT-4o for the agent, GPT-4o-mini for analysis
-The agent brain needs deterministic tool invocation on the authentication branch. A misfire (calling `lookup_caller` before getting the phone number, or skipping identity confirmation) is a compliance failure. GPT-4o is chosen for its **mature, well-tested function-calling behavior** rather than chasing the latest model — stability beats benchmark scores at the auth step. The post-call analysis runs async and is latency-insensitive, so GPT-4o-mini handles it at a fraction of the cost with acceptable accuracy for structured extraction.
+### LLM split — GPT-4.1 for the agent, GPT-4.1-mini for analysis
+The agent brain needs deterministic tool invocation on the authentication branch. A misfire (calling `lookup_caller` before getting the phone number, or skipping identity confirmation) is a compliance failure. GPT-4.1 was chosen over GPT-4o for two concrete reasons: (1) **better instruction-following and function-calling reliability** — exactly the failure mode we care about, and (2) it's **cheaper** ($2/$8 vs $5/$15 per million tokens), so the upgrade is strictly Pareto-better. Reasoning models (o1, o3) were ruled out — their inference latency breaks the sub-second conversational feel.
+
+For post-call analysis, GPT-4.1-mini handles structured JSON extraction with stronger schema adherence than 4o-mini, at moderate cost ($0.40/$1.60 per million). The async post-call path is latency-insensitive so a heavier model is acceptable; the small quality bump means fewer downstream Airtable validation errors and more accurate QA scores. We considered `gpt-4.1-nano` for additional savings but it's unreliable on the 9-item rubric's structured output.
 
 ### Backend — FastAPI on Railway
 Two endpoints (`/lookup`, `/webhook`) plus a health probe. The post-call pipeline runs as a FastAPI `BackgroundTask` so the webhook handler returns within VAPI's timeout while analysis, QA scoring, and Airtable writes happen asynchronously.
