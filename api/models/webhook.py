@@ -14,13 +14,21 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class VAPIToolMessage(BaseModel):
-    """One entry in `call.messages` — could be system/user/assistant/tool."""
+    """One entry in `call.messages`.
+
+    VAPI's tool-result messages use role=`tool_call_result` and put the
+    string result the LLM sees in a `result` field (NOT `content`).
+    Other roles (`system`, `bot`, `user`, `tool_calls`) put text in
+    `content` or are wrappers around `toolCalls`. We capture both fields
+    and let the consumer pick the right one.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
     role: str | None = None
     name: str | None = None
     content: Any = None
+    result: Any = None
     tool_call_id: str | None = Field(default=None, alias="toolCallId")
 
 

@@ -101,6 +101,24 @@ class TestExtractAirtableId:
         )
         assert extract_airtable_id(event) == "recJane"
 
+    def test_returns_id_from_vapi_tool_call_result_format(self):
+        # Real VAPI shape: role="tool_call_result" with payload in `result`,
+        # not `content`. Confirmed via inspect_call.py against a real call.
+        event = _event(
+            call={
+                "id": "c",
+                "messages": [
+                    {
+                        "role": "tool_call_result",
+                        "name": "lookup_caller",
+                        "result": '{"found": true, "airtable_record_id": "recJane"}',
+                        "toolCallId": "call_xyz",
+                    }
+                ],
+            }
+        )
+        assert extract_airtable_id(event) == "recJane"
+
     def test_uses_most_recent_lookup_when_called_twice(self):
         event = _event(
             call={

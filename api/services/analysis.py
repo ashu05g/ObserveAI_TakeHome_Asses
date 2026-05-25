@@ -142,19 +142,35 @@ def extract_transcript(event: VAPIEvent) -> str:
     return "\n".join(parts)
 
 
+TOOL_RESULT_ROLES = ("tool_call_result", "tool", "function")
+
+
 def extract_airtable_id(event: VAPIEvent) -> str | None:
     """Walk the tool-call history backwards and return the airtable_record_id
     from the most recent successful lookup_caller response, or None if no
-    such response is found (unauthenticated call)."""
-    for msg in reversed(event.call.messages):
-        if msg.role != "tool" or msg.name != "lookup_caller":
+    such response is found (unauthenticated call).
+
+    VAPI's tool-result message uses role=`tool_call_result` with the
+    stringified result in a `result` field. We also accept `tool` /
+    `function` for forward/backward compatibility with other VAPI
+    versions, and try `content` as a fallback location for the result
+    payload.
+    """
+    messages = event.call.messages
+    for msg in reversed(messages):
+        if msg.role not in TOOL_RESULT_ROLES:
             continue
-        body = msg.content
+        if msg.name and msg.name != "lookup_caller":
+            continue
+
+        body = msg.result if msg.result is not None else msg.content
         if isinstance(body, str):
             try:
                 body = json.loads(body)
             except json.JSONDecodeError:
                 continue
         if isinstance(body, dict) and body.get("found") and body.get("airtable_record_id"):
+            logger.info("extract_airtable_id: matched record %s", body["airtable_record_id"])
             return body["airtable_record_id"]
+    logger.info("extract_airtable_id: no lookup_caller result found in %d messages", len(messages))
     return None

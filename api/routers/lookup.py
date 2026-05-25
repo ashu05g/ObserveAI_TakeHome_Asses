@@ -41,15 +41,20 @@ async def lookup_caller(
         if call.function.name != LOOKUP_FUNCTION:
             results.append(VAPIToolResult(
                 tool_call_id=call.id,
-                result={"error": f"unsupported function: {call.function.name}"},
+                result=json.dumps({"error": f"unsupported function: {call.function.name}"}),
             ))
             continue
 
         args = _parse_arguments(call.function.arguments)
         phone = args.get("phone")
+        # VAPI passes the `result` value into the LLM's tool-message content.
+        # We stringify so the LLM unambiguously sees a JSON string to parse;
+        # passing a dict relies on VAPI's serialization which has been
+        # observed to drop the body in some workspaces.
+        result_dict = await _resolve_lookup(phone)
         results.append(VAPIToolResult(
             tool_call_id=call.id,
-            result=await _resolve_lookup(phone),
+            result=json.dumps(result_dict),
         ))
 
     return VAPIToolResponse(results=results)

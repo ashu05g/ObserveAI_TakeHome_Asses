@@ -88,33 +88,28 @@ def get_openai_client() -> "AsyncOpenAI":
 def trace_pipeline(call_id: str):
     """Open a named Langfuse trace for the duration of the with-block.
     Any langfuse.openai LLM calls inside become child spans automatically.
-    Yields a TraceHandle whose `.url` is the deep-link to the trace view."""
+    Yields a TraceHandle whose `.url` is the deep-link to the trace view.
+
+    `client.start_as_current_span(...)` returns a context manager, not the
+    span itself — the span is the value bound by `with ... as span`. Calling
+    `update_trace` on the context manager object raises AttributeError.
+    """
     handle = TraceHandle()
     client = _get_client()
     if client is None:
         yield handle
         return
 
-    span = None
     try:
-        span = client.start_as_current_span(name="post_call_pipeline")
-        span.__enter__()
-        try:
-            span.update_trace(name=f"call_{call_id}", tags=["claims-agent"])
-        except Exception:
-            logger.exception("langfuse: update_trace failed; continuing")
-        handle.url = _build_trace_url(client, span)
-        logger.info("langfuse: trace started call_id=%s url=%s", call_id, handle.url)
-        yield handle
-    except Exception:
-        logger.exception("langfuse: trace_pipeline raised")
-        yield handle
-    finally:
-        if span is not None:
+        with client.start_as_current_span(name="post_call_pipeline") as span:
             try:
-                span.__exit__(None, None, None)
+                span.update_trace(name=f"call_{call_id}", tags=["claims-agent"])
             except Exception:
-                logger.exception("langfuse: span exit failed")
+                logger.exception("langfuse: update_trace failed; continuing")
+            handle.url = _build_trace_url(client, span)
+            logger.info("langfuse: trace started call_id=%s url=%s", call_id, handle.url)
+            yield handle
+    finally:
         try:
             client.flush()
             logger.debug("langfuse: flushed call_id=%s", call_id)

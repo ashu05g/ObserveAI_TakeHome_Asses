@@ -80,6 +80,11 @@ class TestLookupAuth:
         assert response.status_code == 401
 
 
+def _result(response, index: int = 0) -> dict:
+    """Parse the JSON-encoded result string for the given toolCall index."""
+    return json.loads(response.json()["results"][index]["result"])
+
+
 class TestLookupSuccess:
     @respx.mock
     def test_hit_returns_caller_in_results(self, client):
@@ -92,9 +97,8 @@ class TestLookupSuccess:
         assert response.status_code == 200
         body = response.json()
         assert len(body["results"]) == 1
-        result = body["results"][0]
-        assert result["toolCallId"] == "call_abc"
-        assert result["result"] == {
+        assert body["results"][0]["toolCallId"] == "call_abc"
+        assert _result(response) == {
             "found": True,
             "first_name": "Jane",
             "last_name": "Doe",
@@ -114,7 +118,7 @@ class TestLookupSuccess:
         response = _post(client, _tool_payload("+19999999999"))
 
         assert response.status_code == 200
-        assert response.json()["results"][0]["result"] == {"found": False}
+        assert _result(response) == {"found": False}
 
     @respx.mock
     def test_accepts_dict_arguments(self, client):
@@ -127,7 +131,22 @@ class TestLookupSuccess:
             _tool_payload("+14155550001", arguments={"phone": "+14155550001"}),
         )
         assert response.status_code == 200
-        assert response.json()["results"][0]["result"]["found"] is True
+        assert _result(response)["found"] is True
+
+    def test_result_is_json_encoded_string(self, client):
+        """VAPI's LLM tool-message content is a string; passing an object
+        has been observed to drop the payload. Always stringify."""
+        with respx.mock:
+            respx.get(
+                "https://api.airtable.com/v0/appTest1234567890/callers"
+            ).respond(200, json=_caller_response())
+            response = _post(client, _tool_payload("+14155550001"))
+
+        result_field = response.json()["results"][0]["result"]
+        assert isinstance(result_field, str)
+        # And it round-trips back to the expected structure
+        parsed = json.loads(result_field)
+        assert parsed["found"] is True
 
     @respx.mock
     def test_normalizes_phone_before_lookup(self, client):
@@ -148,14 +167,14 @@ class TestLookupErrors:
         response = _post(client, _tool_payload("not-a-phone"))
 
         assert response.status_code == 200
-        result = response.json()["results"][0]["result"]
+        result = _result(response)
         assert result["found"] is False
         assert "expected a 10-digit" in result["error"]
 
     def test_missing_phone_argument_returns_error(self, client):
         response = _post(client, _tool_payload(phone="", arguments={}))
         assert response.status_code == 200
-        result = response.json()["results"][0]["result"]
+        result = _result(response)
         assert result["found"] is False
         assert "missing phone" in result["error"]
 
@@ -165,8 +184,7 @@ class TestLookupErrors:
             _tool_payload("+14155550001", function_name="do_something_else"),
         )
         assert response.status_code == 200
-        result = response.json()["results"][0]["result"]
-        assert "unsupported function" in result["error"]
+        assert "unsupported function" in _result(response)["error"]
 
     @respx.mock
     def test_airtable_failure_returns_200_with_error(self, client):
@@ -176,7 +194,7 @@ class TestLookupErrors:
 
         response = _post(client, _tool_payload("+14155550001"))
         assert response.status_code == 200
-        result = response.json()["results"][0]["result"]
+        result = _result(response)
         assert result["found"] is False
         assert "unavailable" in result["error"]
 
@@ -186,8 +204,7 @@ class TestLookupErrors:
             _tool_payload("ignored", arguments="not valid json"),
         )
         assert response.status_code == 200
-        result = response.json()["results"][0]["result"]
-        assert "missing phone" in result["error"]
+        assert "missing phone" in _result(response)["error"]
 
 
 class TestMultipleToolCallsInOnePayload:
@@ -226,6 +243,6 @@ class TestMultipleToolCallsInOnePayload:
         results = response.json()["results"]
         assert len(results) == 2
         assert results[0]["toolCallId"] == "call_1"
-        assert results[0]["result"]["found"] is True
+        assert json.loads(results[0]["result"])["found"] is True
         assert results[1]["toolCallId"] == "call_2"
-        assert results[1]["result"]["found"] is False
+        assert json.loads(results[1]["result"])["found"] is False
