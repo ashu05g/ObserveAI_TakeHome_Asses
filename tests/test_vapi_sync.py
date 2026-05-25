@@ -1,5 +1,4 @@
 import json
-from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -17,11 +16,28 @@ def _vapi_sync_env(monkeypatch):
 
 @pytest.fixture
 def stub_prompt(monkeypatch):
-    """Replace the prompt-file Path with a stub that returns a fixed string,
-    so sync tests don't depend on the actual prompt text."""
-    stub = MagicMock()
-    stub.read_text = MagicMock(return_value="TEST SYSTEM PROMPT")
-    monkeypatch.setattr(vapi_sync, "PROMPT_PATH", stub)
+    """Replace assemble_system_prompt with a stub returning a fixed string,
+    so sync tests don't depend on the actual prompt text or KB content."""
+    monkeypatch.setattr(vapi_sync, "assemble_system_prompt", lambda: "TEST SYSTEM PROMPT")
+
+
+class TestAssembleSystemPrompt:
+    def test_includes_base_prompt_and_all_kb_sections(self):
+        prompt = vapi_sync.assemble_system_prompt()
+
+        # Base prompt content
+        assert "You are Emma" in prompt
+        assert "lookup_caller" in prompt
+
+        # KB delimiter + every section heading we configured
+        assert "# REFERENCE INFORMATION" in prompt
+        for heading, _filename in vapi_sync.KB_FILES:
+            assert f"## {heading}" in prompt
+
+        # A couple of distinctive KB facts that should be present
+        assert "1987" in prompt          # from about_company.md
+        assert "deductible" in prompt.lower()  # from policies_and_coverage.md
+        assert "portal.observeinsurance.com" in prompt  # from customer_service.md
 
 
 class TestBuildToolConfig:

@@ -23,6 +23,44 @@ class TestCallerRecord:
         assert record.full_name == "Jane Doe"
         assert record.claim_date == date(2024, 8, 12)
 
+    def test_parses_optional_enriched_fields(self):
+        record = CallerRecord(
+            airtable_id="rec123",
+            first_name="Jane",
+            last_name="Doe",
+            phone="+14155550001",
+            claim_id="CLM-2024-0001",
+            claim_status="approved",
+            claim_type="auto",
+            claim_date="2024-08-12",
+            incident_date="2024-08-10",
+            claim_amount=8500,
+            approved_amount=8000,
+            adjuster_name="Robert Chen",
+            estimated_payout_date="2024-08-25",
+            claim_description="Rear-end collision.",
+        )
+        assert record.claim_amount == 8500
+        assert record.approved_amount == 8000
+        assert record.adjuster_name == "Robert Chen"
+        assert record.estimated_payout_date == date(2024, 8, 25)
+        assert record.incident_date == date(2024, 8, 10)
+
+    def test_optional_fields_default_to_none(self):
+        record = CallerRecord(
+            airtable_id="rec123",
+            first_name="Jane",
+            last_name="Doe",
+            phone="+14155550001",
+            claim_id="CLM-2024-0001",
+            claim_status="pending",
+            claim_type="auto",
+            claim_date="2024-08-12",
+        )
+        assert record.claim_amount is None
+        assert record.adjuster_name is None
+        assert record.documents_needed is None
+
     def test_ignores_unknown_fields(self):
         record = CallerRecord(
             airtable_id="rec123",

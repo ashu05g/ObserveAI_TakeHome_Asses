@@ -98,6 +98,17 @@ async def _resolve_lookup(phone: str | None) -> dict:
         "claim_status": caller.claim_status,
         "claim_type": caller.claim_type,
         "claim_date": caller.claim_date.isoformat(),
+        "incident_date": caller.incident_date.isoformat() if caller.incident_date else None,
+        "claim_amount": caller.claim_amount,
+        "approved_amount": caller.approved_amount,
+        "adjuster_name": caller.adjuster_name,
+        "estimated_payout_date": (
+            caller.estimated_payout_date.isoformat()
+            if caller.estimated_payout_date
+            else None
+        ),
+        "documents_needed": caller.documents_needed,
+        "claim_description": caller.claim_description,
         "airtable_record_id": caller.airtable_id,
     }
 

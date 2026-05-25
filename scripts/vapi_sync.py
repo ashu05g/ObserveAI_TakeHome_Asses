@@ -29,9 +29,36 @@ VAPI_BASE = "https://api.vapi.ai"
 ASSISTANT_NAME = "Emma"
 TOOL_NAME = "lookup_caller"
 
-PROMPT_PATH = (
-    Path(__file__).resolve().parent.parent / "prompts" / "agent_system_prompt.txt"
-)
+REPO_ROOT = Path(__file__).resolve().parent.parent
+PROMPT_PATH = REPO_ROOT / "prompts" / "agent_system_prompt.txt"
+KB_DIR = REPO_ROOT / "docs" / "knowledge_base"
+
+# Order matters — the LLM scans top-to-bottom; put company/policy info before
+# operational/customer-service detail.
+KB_FILES = [
+    ("About Observe Insurance", "about_company.md"),
+    ("Policies and Coverage", "policies_and_coverage.md"),
+    ("Claims Process", "claims_process.md"),
+    ("Customer Service", "customer_service.md"),
+]
+
+
+def assemble_system_prompt() -> str:
+    """Combine the base prompt with the knowledge-base markdown files into
+    a single string. The KB content is inlined under a `# REFERENCE
+    INFORMATION` section the agent is instructed (by the base prompt) to
+    consult for general questions."""
+    base = PROMPT_PATH.read_text(encoding="utf-8").rstrip()
+    sections = ["", "", "# REFERENCE INFORMATION", ""]
+    sections.append(
+        "Use the sections below to answer general questions about the "
+        "company, policies, claims process, and customer service. Never "
+        "invent information that isn't here.\n"
+    )
+    for heading, filename in KB_FILES:
+        content = (KB_DIR / filename).read_text(encoding="utf-8").strip()
+        sections.append(f"## {heading}\n\n{content}\n")
+    return base + "\n".join(sections)
 
 
 def build_tool_config(server_url: str, secret: str) -> dict:
@@ -179,7 +206,8 @@ async def sync() -> int:
     api_key = os.environ["VAPI_API_KEY"]
     server_url = os.environ["SERVER_URL"].rstrip("/")
     secret = os.environ["VAPI_WEBHOOK_SECRET"]
-    system_prompt = PROMPT_PATH.read_text(encoding="utf-8")
+    system_prompt = assemble_system_prompt()
+    print(f"Assembled system prompt: {len(system_prompt)} chars (base + KB)")
 
     headers = {
         "Authorization": f"Bearer {api_key}",

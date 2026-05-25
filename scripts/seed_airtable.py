@@ -1,7 +1,8 @@
-"""Seed the Airtable `callers` table with five test records.
+"""Seed the Airtable `callers` table with five realistic test records.
 
-Idempotent: skips any caller whose phone is already in the table. Run
-once after creating the base, then re-run any time without duplicates.
+Upserts by phone: for each caller, looks up by phone, PATCHes the existing
+row if found, POSTs if not. Safe to re-run after schema changes — existing
+rows get the new fields populated without duplication.
 
     python scripts/seed_airtable.py
 """
@@ -15,6 +16,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Realistic detail per caller so the agent has something to answer
+# "how much is my claim for?" / "who's my adjuster?" with.
 CALLERS = [
     {
         "first_name": "Jane",
@@ -24,6 +27,16 @@ CALLERS = [
         "claim_status": "approved",
         "claim_type": "auto",
         "claim_date": "2024-08-12",
+        "incident_date": "2024-08-10",
+        "claim_amount": 8500.00,
+        "approved_amount": 8000.00,
+        "adjuster_name": "Robert Chen",
+        "estimated_payout_date": "2024-08-25",
+        "documents_needed": "",
+        "claim_description": (
+            "Rear-end collision on I-280 northbound. Minor body damage and "
+            "broken rear bumper, no injuries reported."
+        ),
     },
     {
         "first_name": "Marcus",
@@ -33,6 +46,16 @@ CALLERS = [
         "claim_status": "pending",
         "claim_type": "home",
         "claim_date": "2024-10-03",
+        "incident_date": "2024-10-01",
+        "claim_amount": 14500.00,
+        "approved_amount": None,
+        "adjuster_name": "Linda Park",
+        "estimated_payout_date": None,
+        "documents_needed": "",
+        "claim_description": (
+            "Water damage to basement from burst pipe during October cold "
+            "snap. Drywall and flooring damaged across approx. 400 sq ft."
+        ),
     },
     {
         "first_name": "Priya",
@@ -42,6 +65,20 @@ CALLERS = [
         "claim_status": "requires_documentation",
         "claim_type": "health",
         "claim_date": "2024-11-15",
+        "incident_date": "2024-11-10",
+        "claim_amount": 3200.00,
+        "approved_amount": None,
+        "adjuster_name": "David Martinez",
+        "estimated_payout_date": None,
+        "documents_needed": (
+            "Itemized medical bill from the treating provider, dated visit "
+            "summary, and proof-of-payment receipt. Upload via the portal or "
+            "email support@observeinsurance.com with the claim ID in the subject."
+        ),
+        "claim_description": (
+            "Emergency room visit for a sprained ankle with follow-up x-ray "
+            "imaging the next day."
+        ),
     },
     {
         "first_name": "Tom",
@@ -51,6 +88,16 @@ CALLERS = [
         "claim_status": "approved",
         "claim_type": "life",
         "claim_date": "2024-09-22",
+        "incident_date": "2024-09-15",
+        "claim_amount": 250000.00,
+        "approved_amount": 250000.00,
+        "adjuster_name": "Sarah Kim",
+        "estimated_payout_date": "2024-10-05",
+        "documents_needed": "",
+        "claim_description": (
+            "Life insurance beneficiary claim filed by the surviving spouse. "
+            "Death certificate and policy documentation received and verified."
+        ),
     },
     {
         "first_name": "Alice",
@@ -60,8 +107,24 @@ CALLERS = [
         "claim_status": "pending",
         "claim_type": "auto",
         "claim_date": "2024-12-01",
+        "incident_date": "2024-11-28",
+        "claim_amount": 4800.00,
+        "approved_amount": None,
+        "adjuster_name": "James Wilson",
+        "estimated_payout_date": None,
+        "documents_needed": "",
+        "claim_description": (
+            "Hail damage to vehicle in an open parking lot. Hood and roof "
+            "panels affected; windshield intact."
+        ),
     },
 ]
+
+
+def _airtable_fields(caller: dict) -> dict:
+    """Strip None values — Airtable returns 422 if you send null for an
+    empty optional field instead of just omitting it."""
+    return {k: v for k, v in caller.items() if v is not None and v != ""}
 
 
 async def seed() -> int:
@@ -75,30 +138,44 @@ async def seed() -> int:
         "Content-Type": "application/json",
     }
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        existing = await client.get(url, headers=headers, params={"fields[]": "phone"})
-        existing.raise_for_status()
-        existing_phones = {
-            r["fields"].get("phone") for r in existing.json().get("records", [])
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        existing_resp = await client.get(
+            url, headers=headers, params={"fields[]": "phone"}
+        )
+        existing_resp.raise_for_status()
+        existing_by_phone = {
+            r["fields"].get("phone"): r["id"]
+            for r in existing_resp.json().get("records", [])
+            if r["fields"].get("phone")
         }
 
-        to_create = [c for c in CALLERS if c["phone"] not in existing_phones]
-        if not to_create:
-            print("All seed callers are already present — nothing to do.")
-            return 0
+        created = updated = 0
+        for caller in CALLERS:
+            phone = caller["phone"]
+            fields = _airtable_fields(caller)
+            if phone in existing_by_phone:
+                rec_id = existing_by_phone[phone]
+                resp = await client.patch(
+                    f"{url}/{rec_id}",
+                    headers=headers,
+                    json={"fields": fields, "typecast": True},
+                )
+                resp.raise_for_status()
+                updated += 1
+                print(f"  updated {caller['first_name']} {caller['last_name']} ({phone})")
+            else:
+                resp = await client.post(
+                    url,
+                    headers=headers,
+                    json={"fields": fields, "typecast": True},
+                )
+                resp.raise_for_status()
+                created += 1
+                print(f"  created {caller['first_name']} {caller['last_name']} ({phone})")
 
-        payload = {"records": [{"fields": c} for c in to_create]}
-        response = await client.post(url, headers=headers, json=payload)
-        response.raise_for_status()
-        created = response.json()["records"]
-
-        print(f"Created {len(created)} caller record(s):")
-        for r in created:
-            f = r["fields"]
-            print(f"  - {f['first_name']} {f['last_name']:<10} ({f['phone']}) "
-                  f"claim {f['claim_id']} [{f['claim_status']}]")
-        return len(created)
+        print(f"\nDone. created={created} updated={updated}")
+        return 0
 
 
 if __name__ == "__main__":
-    sys.exit(0 if asyncio.run(seed()) >= 0 else 1)
+    sys.exit(asyncio.run(seed()))

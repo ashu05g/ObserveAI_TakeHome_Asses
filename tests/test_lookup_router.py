@@ -33,6 +33,12 @@ def _caller_response(found_count: int = 1):
                     "claim_status": "approved",
                     "claim_type": "auto",
                     "claim_date": "2024-08-12",
+                    "incident_date": "2024-08-10",
+                    "claim_amount": 8500.00,
+                    "approved_amount": 8000.00,
+                    "adjuster_name": "Robert Chen",
+                    "estimated_payout_date": "2024-08-25",
+                    "claim_description": "Rear-end collision on I-280.",
                 },
             }
         ]
@@ -106,6 +112,13 @@ class TestLookupSuccess:
             "claim_status": "approved",
             "claim_type": "auto",
             "claim_date": "2024-08-12",
+            "incident_date": "2024-08-10",
+            "claim_amount": 8500.00,
+            "approved_amount": 8000.00,
+            "adjuster_name": "Robert Chen",
+            "estimated_payout_date": "2024-08-25",
+            "documents_needed": None,
+            "claim_description": "Rear-end collision on I-280.",
             "airtable_record_id": "recJaneDoe",
         }
 

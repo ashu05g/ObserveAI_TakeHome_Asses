@@ -52,6 +52,32 @@ def callers_schema() -> list[dict]:
             "type": "date",
             "options": {"dateFormat": {"name": "iso"}},
         },
+        # Richer claim details so the agent can answer real caller questions
+        # ("how much is my claim for?", "who's my adjuster?", "when will I be
+        # paid?") without inventing values.
+        {
+            "name": "claim_amount",
+            "type": "currency",
+            "options": {"precision": 2, "symbol": "$"},
+        },
+        {
+            "name": "approved_amount",
+            "type": "currency",
+            "options": {"precision": 2, "symbol": "$"},
+        },
+        {"name": "adjuster_name", "type": "singleLineText"},
+        {
+            "name": "estimated_payout_date",
+            "type": "date",
+            "options": {"dateFormat": {"name": "iso"}},
+        },
+        {"name": "documents_needed", "type": "multilineText"},
+        {"name": "claim_description", "type": "multilineText"},
+        {
+            "name": "incident_date",
+            "type": "date",
+            "options": {"dateFormat": {"name": "iso"}},
+        },
     ]
 
 
