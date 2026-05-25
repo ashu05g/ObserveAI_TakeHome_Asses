@@ -37,6 +37,14 @@ class TestBuildToolConfig:
         assert schema["parameters"]["required"] == ["phone"]
         assert "phone" in schema["parameters"]["properties"]
 
+    def test_tool_is_synchronous(self):
+        # async=True (VAPI's dashboard default) causes VAPI to discard the
+        # response body and inject "Success." for the LLM. Catastrophic for
+        # a lookup tool — without this flag set explicitly, the LLM never
+        # sees the caller's data.
+        cfg = vapi_sync.build_tool_config("https://x", "s")
+        assert cfg["async"] is False
+
 
 class TestBuildAssistantConfig:
     def test_model_is_gpt_4_1_with_low_temperature(self):

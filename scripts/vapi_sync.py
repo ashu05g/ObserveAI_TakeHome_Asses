@@ -37,6 +37,12 @@ PROMPT_PATH = (
 def build_tool_config(server_url: str, secret: str) -> dict:
     return {
         "type": "function",
+        # CRITICAL: async=False makes VAPI wait for the server's response and
+        # pass the `result` value into the LLM's tool message. With async=True
+        # (VAPI's dashboard default for function tools) VAPI fires the request,
+        # ignores the body, and inserts "Success." for the LLM — which makes
+        # the lookup pointless because the LLM never sees the caller's data.
+        "async": False,
         "function": {
             "name": TOOL_NAME,
             "description": (

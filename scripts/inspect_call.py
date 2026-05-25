@@ -13,7 +13,6 @@ import asyncio
 import json
 import os
 import sys
-from textwrap import shorten
 
 import httpx
 from dotenv import load_dotenv
@@ -24,7 +23,7 @@ VAPI_BASE = "https://api.vapi.ai"
 
 
 def _truncate(value, limit: int = 300) -> str:
-    if isinstance(value, (dict, list)):
+    if isinstance(value, dict | list):
         value = json.dumps(value, indent=2)
     s = str(value)
     return s if len(s) <= limit else s[:limit] + f"... [+{len(s) - limit} chars]"
@@ -49,7 +48,7 @@ def _dump_assistant(call: dict) -> None:
     print(f"model:       {model.get('provider')}/{model.get('model')} (temp={model.get('temperature')})")
     print(f"voice:       {voice.get('provider')}/{voice.get('voiceId')} ({voice.get('model')})")
     print(f"transcriber: {transcriber.get('provider')}/{transcriber.get('model')}")
-    print(f"firstMessage:")
+    print("firstMessage:")
     print(f"  {_truncate(assistant.get('firstMessage', ''), 200)}")
 
     sys_prompt = next(
