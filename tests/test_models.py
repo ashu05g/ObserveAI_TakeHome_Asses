@@ -195,3 +195,45 @@ class TestVAPIWebhookPayload:
             }
         )
         assert payload.message.call.id == "call_abc"
+
+    def test_parses_status_update_fields(self):
+        payload = VAPIWebhookPayload.model_validate(
+            {
+                "message": {
+                    "type": "status-update",
+                    "status": "ended",
+                    "endedReason": "customer-ended-call",
+                    "call": {"id": "call_abc"},
+                }
+            }
+        )
+        assert payload.message.status == "ended"
+        assert payload.message.ended_reason == "customer-ended-call"
+
+    def test_parses_transcript_event_fields(self):
+        payload = VAPIWebhookPayload.model_validate(
+            {
+                "message": {
+                    "type": "transcript",
+                    "role": "user",
+                    "transcript": "hello there",
+                    "transcriptType": "final",
+                    "call": {"id": "call_abc"},
+                }
+            }
+        )
+        assert payload.message.role == "user"
+        assert payload.message.transcript == "hello there"
+        assert payload.message.transcript_type == "final"
+
+    def test_parses_model_output_field(self):
+        payload = VAPIWebhookPayload.model_validate(
+            {
+                "message": {
+                    "type": "model-output",
+                    "output": "Am I speaking with Jane Doe?",
+                    "call": {"id": "call_abc"},
+                }
+            }
+        )
+        assert payload.message.output == "Am I speaking with Jane Doe?"

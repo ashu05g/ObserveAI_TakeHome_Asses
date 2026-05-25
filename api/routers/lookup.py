@@ -15,6 +15,7 @@ from fastapi import APIRouter, Header, HTTPException
 
 from api.models.tool_call import VAPIToolCallRequest, VAPIToolResponse, VAPIToolResult
 from api.services.airtable import get_caller_by_phone
+from api.services.langfuse_client import trace_lookup
 from api.utils.auth import verify_vapi_secret
 from api.utils.phone import InvalidPhoneNumber, normalize_phone
 
@@ -36,26 +37,44 @@ async def lookup_caller(
             detail="invalid or missing X-VAPI-Secret header",
         )
 
-    results: list[VAPIToolResult] = []
-    for call in payload.message.tool_calls:
-        if call.function.name != LOOKUP_FUNCTION:
+    call_id = payload.message.call_id
+
+    with trace_lookup(call_id) as span:
+        results: list[VAPIToolResult] = []
+        for call in payload.message.tool_calls:
+            if call.function.name != LOOKUP_FUNCTION:
+                results.append(VAPIToolResult(
+                    tool_call_id=call.id,
+                    result=json.dumps({"error": f"unsupported function: {call.function.name}"}),
+                ))
+                continue
+
+            args = _parse_arguments(call.function.arguments)
+            phone = args.get("phone")
+            # VAPI passes the `result` value into the LLM's tool-message
+            # content. We stringify so the LLM unambiguously sees a JSON
+            # string to parse; passing a dict has been observed to make
+            # VAPI drop the body and inject "Success." instead.
+            result_dict = await _resolve_lookup(phone)
             results.append(VAPIToolResult(
                 tool_call_id=call.id,
-                result=json.dumps({"error": f"unsupported function: {call.function.name}"}),
+                result=json.dumps(result_dict),
             ))
-            continue
 
-        args = _parse_arguments(call.function.arguments)
-        phone = args.get("phone")
-        # VAPI passes the `result` value into the LLM's tool-message content.
-        # We stringify so the LLM unambiguously sees a JSON string to parse;
-        # passing a dict relies on VAPI's serialization which has been
-        # observed to drop the body in some workspaces.
-        result_dict = await _resolve_lookup(phone)
-        results.append(VAPIToolResult(
-            tool_call_id=call.id,
-            result=json.dumps(result_dict),
-        ))
+        if span is not None:
+            try:
+                span.update(
+                    input={"phone_requests": [
+                        {"id": c.id, "args": c.function.arguments}
+                        for c in payload.message.tool_calls
+                    ]},
+                    output={"results": [
+                        {"tool_call_id": r.tool_call_id, "result": r.result}
+                        for r in results
+                    ]},
+                )
+            except Exception:
+                logger.exception("langfuse: lookup span update failed; continuing")
 
     return VAPIToolResponse(results=results)
 

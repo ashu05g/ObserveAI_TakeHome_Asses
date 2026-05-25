@@ -86,13 +86,9 @@ def get_openai_client() -> "AsyncOpenAI":
 
 @contextmanager
 def trace_pipeline(call_id: str):
-    """Open a named Langfuse trace for the duration of the with-block.
-    Any langfuse.openai LLM calls inside become child spans automatically.
-    Yields a TraceHandle whose `.url` is the deep-link to the trace view.
-
-    `client.start_as_current_span(...)` returns a context manager, not the
-    span itself — the span is the value bound by `with ... as span`. Calling
-    `update_trace` on the context manager object raises AttributeError.
+    """Open a named Langfuse trace for the post-call pipeline, grouped under
+    the call's session so it appears alongside live events in the Sessions
+    view. Yields a TraceHandle whose `.url` deep-links to the trace.
     """
     handle = TraceHandle()
     client = _get_client()
@@ -103,7 +99,11 @@ def trace_pipeline(call_id: str):
     try:
         with client.start_as_current_span(name="post_call_pipeline") as span:
             try:
-                span.update_trace(name=f"call_{call_id}", tags=["claims-agent"])
+                span.update_trace(
+                    name="post_call_pipeline",
+                    session_id=call_id,
+                    tags=["claims-agent", "post-call"],
+                )
             except Exception:
                 logger.exception("langfuse: update_trace failed; continuing")
             handle.url = _build_trace_url(client, span)
@@ -113,6 +113,66 @@ def trace_pipeline(call_id: str):
         try:
             client.flush()
             logger.debug("langfuse: flushed call_id=%s", call_id)
+        except Exception:
+            logger.exception("langfuse: flush failed")
+
+
+@contextmanager
+def trace_lookup(call_id: str | None):
+    """Wrap a /lookup invocation in a Langfuse trace. When `call_id` is
+    provided (always true for VAPI-triggered requests), the trace is grouped
+    under the call's session for waterfall view alongside other live events.
+    """
+    client = _get_client()
+    if client is None:
+        yield None
+        return
+
+    try:
+        with client.start_as_current_span(name="lookup_caller") as span:
+            try:
+                update_kwargs: dict = {
+                    "name": "lookup_caller",
+                    "tags": ["claims-agent", "live", "tool"],
+                }
+                if call_id:
+                    update_kwargs["session_id"] = call_id
+                span.update_trace(**update_kwargs)
+            except Exception:
+                logger.exception("langfuse: update_trace failed; continuing")
+            yield span
+    finally:
+        try:
+            client.flush()
+        except Exception:
+            logger.exception("langfuse: flush failed")
+
+
+def log_call_event(call_id: str, event_type: str, fields: dict | None = None) -> None:
+    """Record a VAPI webhook event as a short Langfuse trace grouped under
+    the call's session. Used for live waterfall — one trace per webhook
+    event (status-update, transcript, model-output, ...)."""
+    client = _get_client()
+    if client is None:
+        return
+
+    try:
+        with client.start_as_current_span(name=f"vapi:{event_type}") as span:
+            try:
+                span.update_trace(
+                    name=f"vapi:{event_type}",
+                    session_id=call_id,
+                    tags=["claims-agent", "live", f"event:{event_type}"],
+                )
+                if fields:
+                    span.update(input=fields)
+            except Exception:
+                logger.exception("langfuse: log_call_event update failed")
+    except Exception:
+        logger.exception("langfuse: log_call_event failed")
+    finally:
+        try:
+            client.flush()
         except Exception:
             logger.exception("langfuse: flush failed")
 

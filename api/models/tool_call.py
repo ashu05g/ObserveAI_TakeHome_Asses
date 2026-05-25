@@ -24,11 +24,25 @@ class VAPIToolCall(BaseModel):
     function: VAPIFunctionCall
 
 
+class _CallInfo(BaseModel):
+    """Minimal call-info wrapper VAPI nests inside the tool-calls message,
+    used here only to surface the call.id for Langfuse session grouping."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str | None = None
+
+
 class VAPIToolCallMessage(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     type: str
     tool_calls: list[VAPIToolCall] = Field(default_factory=list, alias="toolCalls")
+    call: _CallInfo | None = None
+
+    @property
+    def call_id(self) -> str | None:
+        return self.call.id if self.call else None
 
 
 class VAPIToolCallRequest(BaseModel):

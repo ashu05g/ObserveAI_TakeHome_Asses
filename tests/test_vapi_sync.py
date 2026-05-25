@@ -94,6 +94,17 @@ class TestBuildAssistantConfig:
         cfg = vapi_sync.build_assistant_config("https://x", "s", "p", "t")
         assert "end-of-call-report" in cfg["serverMessages"]
 
+    def test_live_event_subscriptions(self):
+        # status-update, transcript, model-output drive the Langfuse live
+        # waterfall (tool-calls is traced at /lookup itself).
+        cfg = vapi_sync.build_assistant_config("https://x", "s", "p", "t")
+        assert set(cfg["serverMessages"]) >= {
+            "end-of-call-report",
+            "status-update",
+            "transcript",
+            "model-output",
+        }
+
     def test_number_endpointing_is_generous(self):
         # Callers pause between digit groups ("415 ... 555 ... 0001").
         # The on-number wait must exceed those natural breaks or the

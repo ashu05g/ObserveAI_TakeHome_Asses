@@ -153,7 +153,15 @@ def build_assistant_config(
             "url": f"{server_url}/webhook",
             "headers": {"X-VAPI-Secret": secret},
         },
-        "serverMessages": ["end-of-call-report"],
+        # Subscribe to live events for the full Langfuse waterfall (each
+        # event becomes a trace under the call's session). Skipping
+        # tool-calls — we already trace those at the /lookup endpoint.
+        "serverMessages": [
+            "end-of-call-report",
+            "status-update",
+            "transcript",
+            "model-output",
+        ],
     }
 
 

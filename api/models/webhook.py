@@ -41,15 +41,36 @@ class VAPICall(BaseModel):
 
 
 class VAPIEvent(BaseModel):
-    """The inner `message` object containing the actual event data."""
+    """The inner `message` object containing the actual event data.
+
+    Different event types populate different fields:
+      - end-of-call-report: transcript, summary, duration_seconds
+      - status-update: status, ended_reason
+      - transcript: role, transcript, transcript_type
+      - model-output: output
+    Unset fields stay None.
+    """
 
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     type: str
     call: VAPICall
+
+    # end-of-call-report
     transcript: str | None = None
     summary: str | None = None
     duration_seconds: float | None = Field(default=None, alias="durationSeconds")
+
+    # status-update
+    status: str | None = None
+    ended_reason: str | None = Field(default=None, alias="endedReason")
+
+    # transcript event
+    role: str | None = None
+    transcript_type: str | None = Field(default=None, alias="transcriptType")
+
+    # model-output
+    output: str | None = None
 
 
 class VAPIWebhookPayload(BaseModel):
