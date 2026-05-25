@@ -70,6 +70,15 @@ class TestBuildAssistantConfig:
         cfg = vapi_sync.build_assistant_config("https://x", "s", "p", "t")
         assert "end-of-call-report" in cfg["serverMessages"]
 
+    def test_number_endpointing_is_generous(self):
+        # Callers pause between digit groups ("415 ... 555 ... 0001").
+        # The on-number wait must exceed those natural breaks or the
+        # tool gets called with a partial number.
+        cfg = vapi_sync.build_assistant_config("https://x", "s", "p", "t")
+        plan = cfg["startSpeakingPlan"]["transcriptionEndpointingPlan"]
+        assert plan["onNumberSeconds"] >= 2.5
+        assert plan["onNoPunctuationSeconds"] >= 1.5
+
     def test_transcriber_is_nova_3(self):
         cfg = vapi_sync.build_assistant_config("https://x", "s", "p", "t")
         assert cfg["transcriber"]["model"] == "nova-3"

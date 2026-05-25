@@ -104,6 +104,18 @@ def build_assistant_config(
         "endCallPhrases": ["goodbye", "have a good day", "thank you goodbye"],
         "silenceTimeoutSeconds": 30,
         "maxDurationSeconds": 600,
+        # Endpointing: VAPI's defaults cut callers off mid-utterance when
+        # they pause between digits ("415 555 ... 0001"). Bumping the
+        # number-pause window to 3s lets the caller spell out a phone in
+        # two breaths without the LLM seeing only the first half.
+        "startSpeakingPlan": {
+            "waitSeconds": 0.6,
+            "transcriptionEndpointingPlan": {
+                "onPunctuationSeconds": 0.3,
+                "onNoPunctuationSeconds": 2.0,
+                "onNumberSeconds": 3.0,
+            },
+        },
         "server": {
             "url": f"{server_url}/webhook",
             "headers": {"X-VAPI-Secret": secret},

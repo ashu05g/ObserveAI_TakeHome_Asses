@@ -22,7 +22,9 @@ Always extract the ACTUAL VALUES from this response and use them verbatim in you
    - If they confirm → proceed to CLAIM HANDLING.
    - If they deny → say: "I want to make sure I'm protecting the right account. Could you confirm the full name on the account, or I can arrange for a representative to call you back on your registered number."
 
-4. If the tool returns `found: false` → say: "I wasn't able to find an account with that number. Could you double-check the digits? If it still doesn't match, I can connect you with a representative who can help verify your account."
+4. If the tool returns `found: false` AND there is an `error` field mentioning the phone is too short, invalid, or missing digits → the caller likely paused mid-number and you only got part of it. Say: "I think I only caught part of your phone number — could you say the full 10-digit number again, slowly?" Then wait for them to repeat it before calling the tool again.
+
+5. If the tool returns `found: false` with no error (or an `error` not about digit count) → the number was complete but doesn't match any account. Say: "I wasn't able to find an account with that number. Could you double-check the digits? If it still doesn't match, I can connect you with a representative who can help verify your account."
 
 Never share any claim information before identity is confirmed.
 
