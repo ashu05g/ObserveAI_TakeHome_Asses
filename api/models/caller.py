@@ -10,14 +10,9 @@ ClaimType = Literal["auto", "home", "health", "life"]
 class CallerRecord(BaseModel):
     """A row from the Airtable `callers` table.
 
-    `airtable_id` is Airtable's internal `rec...` identifier (not the
-    user-facing auto-number field). It's the value used when linking
-    interactions back to a caller.
-
-    Optional fields are populated for callers whose claim has progressed
-    far enough to have that data (e.g., `approved_amount` only exists for
-    approved claims; `documents_needed` is meaningful only when status is
-    `requires_documentation`).
+    `airtable_id` is Airtable's internal `rec...` ID (used when linking
+    interactions). Optional fields depend on claim stage — e.g.,
+    `approved_amount` only exists for approved claims.
     """
 
     model_config = ConfigDict(extra="ignore")

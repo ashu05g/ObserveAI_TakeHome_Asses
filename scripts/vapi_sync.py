@@ -153,14 +153,19 @@ def build_assistant_config(
             "url": f"{server_url}/webhook",
             "headers": {"X-VAPI-Secret": secret},
         },
-        # Subscribe to live events for the full Langfuse waterfall (each
-        # event becomes a trace under the call's session). Skipping
-        # tool-calls — we already trace those at the /lookup endpoint.
+        # Subscribe to live events for the per-call Langfuse waterfall.
+        # Deliberately NOT subscribing to:
+        #  - `model-output`: fires per streaming token chunk; one bot turn
+        #    can emit 50+ webhooks. Killed our signal-to-noise ratio
+        #    (~970 events per 60s call) without adding info beyond what
+        #    transcripts give us.
+        #  - `tool-calls`: we already trace tool invocation at the /lookup
+        #    endpoint with full args + result; the webhook duplicate adds
+        #    nothing.
         "serverMessages": [
             "end-of-call-report",
             "status-update",
             "transcript",
-            "model-output",
         ],
     }
 

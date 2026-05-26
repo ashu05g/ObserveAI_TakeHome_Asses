@@ -1,10 +1,6 @@
-"""FastAPI entry point.
-
-Loads `.env` for local dev (no-op when env vars are already set by the
-hosting platform, e.g. Railway). Validates required env vars on startup
-so misconfiguration fails fast instead of producing cryptic runtime
-errors on the first webhook hit.
-"""
+"""FastAPI entry point. Loads `.env` for local dev, validates required env
+vars on startup, and warms the Langfuse client so init failures surface
+in startup logs rather than on the first webhook."""
 
 import logging
 import os
@@ -35,19 +31,13 @@ logging.basicConfig(
 )
 
 
-def _missing_env() -> list[str]:
-    return [name for name in REQUIRED_ENV if not os.environ.get(name)]
-
-
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    missing = _missing_env()
+    missing = [name for name in REQUIRED_ENV if not os.environ.get(name)]
     if missing:
         raise RuntimeError(
             f"Required environment variables are not set: {', '.join(missing)}"
         )
-    # Warm Langfuse so init failures surface in startup logs, not on the
-    # first webhook.
     from api.services.langfuse_client import _get_client
     _get_client()
     yield

@@ -1,9 +1,6 @@
-"""Post-call email alerts via Resend.
-
-Triggered for low-QA-score or negative-sentiment calls. Sent from Resend's
-sandbox sender (`onboarding@resend.dev`) so no domain verification is needed
-for the demo; in production this would move to a verified domain.
-"""
+"""Post-call email alerts via Resend, fired for low QA score or negative
+sentiment. Sender defaults to Resend's sandbox so no domain verification
+is needed; switch to a verified domain in production."""
 
 import os
 

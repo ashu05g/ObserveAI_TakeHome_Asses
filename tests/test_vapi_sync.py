@@ -95,15 +95,14 @@ class TestBuildAssistantConfig:
         assert "end-of-call-report" in cfg["serverMessages"]
 
     def test_live_event_subscriptions(self):
-        # status-update, transcript, model-output drive the Langfuse live
-        # waterfall (tool-calls is traced at /lookup itself).
+        # status-update + final transcripts drive the per-call waterfall.
+        # model-output is excluded by design — it fires per streaming token
+        # chunk and ballooned trace count to ~970/call. tool-calls is
+        # traced at /lookup directly.
         cfg = vapi_sync.build_assistant_config("https://x", "s", "p", "t")
-        assert set(cfg["serverMessages"]) >= {
-            "end-of-call-report",
-            "status-update",
-            "transcript",
-            "model-output",
-        }
+        subs = set(cfg["serverMessages"])
+        assert subs >= {"end-of-call-report", "status-update", "transcript"}
+        assert "model-output" not in subs
 
     def test_number_endpointing_is_generous(self):
         # Callers pause between digit groups ("415 ... 555 ... 0001").

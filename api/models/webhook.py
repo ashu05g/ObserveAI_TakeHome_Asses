@@ -1,11 +1,8 @@
 """VAPI webhook payload model.
 
-VAPI wraps every server-URL event under a top-level `message` field, and the
-catalog of event types is open-ended (assistant-request, transcript,
-status-update, end-of-call-report, model-output, tool-calls, hang,
-user-interrupted, ...). We accept any string `type` and let the router
-branch — only `end-of-call-report` triggers the post-call pipeline; the
-rest are ignored.
+VAPI's event-type list is open-ended, so `type` is a free string and the
+router branches on it. Event-type-specific fields are all optional —
+each event populates a different subset.
 """
 
 from typing import Any
@@ -14,14 +11,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class VAPIToolMessage(BaseModel):
-    """One entry in `call.messages`.
-
-    VAPI's tool-result messages use role=`tool_call_result` and put the
-    string result the LLM sees in a `result` field (NOT `content`).
-    Other roles (`system`, `bot`, `user`, `tool_calls`) put text in
-    `content` or are wrappers around `toolCalls`. We capture both fields
-    and let the consumer pick the right one.
-    """
+    """One entry in `call.messages`. Tool-result messages
+    (role=`tool_call_result`) put the LLM-visible payload in `result`,
+    not `content` — we capture both and let the consumer pick."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -41,16 +33,6 @@ class VAPICall(BaseModel):
 
 
 class VAPIEvent(BaseModel):
-    """The inner `message` object containing the actual event data.
-
-    Different event types populate different fields:
-      - end-of-call-report: transcript, summary, duration_seconds
-      - status-update: status, ended_reason
-      - transcript: role, transcript, transcript_type
-      - model-output: output
-    Unset fields stay None.
-    """
-
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     type: str

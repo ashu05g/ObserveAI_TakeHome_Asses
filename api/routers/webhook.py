@@ -1,11 +1,9 @@
 """VAPI server-URL webhook.
 
-Receives every event VAPI is subscribed to send (subscribe list lives in
-`vapi_sync.py` → `serverMessages`). For most events we just log them to
-Langfuse as part of the live call waterfall; for `end-of-call-report` we
-also kick off the post-call analysis pipeline.
-
-Auth: shared-secret header (X-VAPI-Secret) configured in the VAPI dashboard.
+Receives every event VAPI is subscribed to send (subscribe list in
+`vapi_sync.py` -> serverMessages). Live events are logged to Langfuse for
+the per-call waterfall; `end-of-call-report` additionally triggers the
+post-call pipeline. Auth: shared-secret header `X-VAPI-Secret`.
 """
 
 import logging
@@ -54,28 +52,21 @@ async def vapi_webhook(
 
 
 def _should_trace(event: VAPIEvent) -> bool:
-    """Skip noisy events. Interim STT chunks fire every ~200ms; tracing
-    them all would 10x our Langfuse cost without adding signal — the
-    final transcript per turn is what matters."""
+    # Interim STT chunks fire every ~200ms; we only want final transcripts
+    # in the waterfall to keep signal-to-noise high.
     return not (event.type == "transcript" and event.transcript_type == "partial")
 
 
 def _event_fields(event: VAPIEvent) -> dict:
-    """Pull the small set of event-type-specific fields we want surfaced in
-    Langfuse. Excludes raw payload to keep traces compact."""
+    """Event-type-specific fields to surface in Langfuse trace input."""
     if event.type == "status-update":
-        return {
-            "status": event.status,
-            "ended_reason": event.ended_reason,
-        }
+        return {"status": event.status, "ended_reason": event.ended_reason}
     if event.type == "transcript":
         return {
             "role": event.role,
             "transcript": event.transcript,
             "transcript_type": event.transcript_type,
         }
-    if event.type == "model-output":
-        return {"output": event.output}
     if event.type == "end-of-call-report":
         return {
             "duration_seconds": event.duration_seconds,

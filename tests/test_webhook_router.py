@@ -178,7 +178,10 @@ class TestLiveTracing:
         client.post("/webhook", json=payload, headers={"X-VAPI-Secret": VALID_SECRET})
         assert captured_trace_events == []
 
-    def test_model_output_is_traced(self, client, captured_trace_events):
+    def test_model_output_is_received_but_not_traced_specially(self, client, captured_trace_events):
+        # We don't subscribe to model-output in vapi_sync (per-token noise),
+        # but if VAPI ever delivers one we still accept the request and log
+        # generically (no event-specific fields extracted).
         payload = {
             "message": {
                 "type": "model-output",
@@ -186,11 +189,15 @@ class TestLiveTracing:
                 "call": {"id": "call_abc"},
             }
         }
-        client.post("/webhook", json=payload, headers={"X-VAPI-Secret": VALID_SECRET})
+        response = client.post(
+            "/webhook", json=payload, headers={"X-VAPI-Secret": VALID_SECRET}
+        )
+        assert response.status_code == 200
         assert len(captured_trace_events) == 1
         _, event_type, fields = captured_trace_events[0]
         assert event_type == "model-output"
-        assert fields["output"] == "Am I speaking with Jane Doe?"
+        # Generic dispatch — no field extraction for unsubscribed types
+        assert fields == {}
 
     def test_end_of_call_is_both_traced_and_pipelined(
         self, client, captured_trace_events, captured_pipeline_calls

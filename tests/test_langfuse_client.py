@@ -61,9 +61,30 @@ class TestEnabledMode:
         yield fake_client, fake_span
         reset_for_tests()
 
-    def test_trace_pipeline_yields_real_url(self, fake_langfuse_module):
+    def test_trace_pipeline_yields_url_derived_from_call_id(self, fake_langfuse_module):
+        # URL is now deterministic from call_id (sha256 prefix), so the
+        # whole pipeline points at the same trace as live webhook events.
         with trace_pipeline("call_abc") as handle:
-            assert handle.url == "https://us.cloud.langfuse.com/trace/trace_abc123"
+            assert handle.url is not None
+            assert handle.url.startswith("https://us.cloud.langfuse.com/trace/")
+            # 32 hex chars after /trace/
+            trace_hex = handle.url.rsplit("/", 1)[-1]
+            assert len(trace_hex) == 32
+            assert all(c in "0123456789abcdef" for c in trace_hex)
+
+    def test_trace_pipeline_url_is_stable_for_same_call_id(self, fake_langfuse_module):
+        with trace_pipeline("call_abc") as h1:
+            url1 = h1.url
+        with trace_pipeline("call_abc") as h2:
+            url2 = h2.url
+        assert url1 == url2
+
+    def test_trace_pipeline_url_differs_per_call_id(self, fake_langfuse_module):
+        with trace_pipeline("call_abc") as h1:
+            url1 = h1.url
+        with trace_pipeline("call_xyz") as h2:
+            url2 = h2.url
+        assert url1 != url2
 
     def test_trace_pipeline_flushes_on_exit(self, fake_langfuse_module):
         fake_client, _ = fake_langfuse_module
@@ -71,17 +92,13 @@ class TestEnabledMode:
             pass
         fake_client.flush.assert_called_once()
 
-    def test_trace_pipeline_calls_update_trace_with_session(self, fake_langfuse_module):
+    def test_trace_pipeline_sets_session_id_to_call_id(self, fake_langfuse_module):
         _, fake_span = fake_langfuse_module
         with trace_pipeline("call_xyz"):
             pass
-        # session_id=call_id so the post-call trace appears alongside live
-        # events in the Langfuse Sessions waterfall view.
-        fake_span.update_trace.assert_called_with(
-            name="post_call_pipeline",
-            session_id="call_xyz",
-            tags=["claims-agent", "post-call"],
-        )
+        kwargs = fake_span.update_trace.call_args.kwargs
+        assert kwargs["session_id"] == "call_xyz"
+        assert "post-call" in kwargs["tags"]
 
     def test_get_openai_client_returns_traced_when_available(self, monkeypatch):
         """When langfuse.openai is importable, get_openai_client returns
@@ -122,24 +139,24 @@ class TestEnabledMode:
         assert isinstance(client, PlainAsyncOpenAI)
         reset_for_tests()
 
-    def test_falls_back_to_host_url_when_get_trace_url_missing(self, monkeypatch):
+    def test_url_uses_langfuse_host_env(self, monkeypatch):
+        # URL is computed locally from LANGFUSE_HOST + our derived trace_id,
+        # not from the SDK — so we don't depend on `get_trace_url` existing.
         monkeypatch.setenv("LANGFUSE_ENABLED", "true")
+        monkeypatch.setenv("LANGFUSE_HOST", "https://my-langfuse.local")
         reset_for_tests()
 
         fake_span = MagicMock()
-        fake_span.trace_id = "trace_xyz"
         fake_span.__enter__ = MagicMock(return_value=fake_span)
         fake_span.__exit__ = MagicMock(return_value=False)
-
-        fake_client = MagicMock(spec=["start_as_current_span", "flush"])
+        fake_client = MagicMock()
         fake_client.start_as_current_span = MagicMock(return_value=fake_span)
-
         fake_module = MagicMock()
         fake_module.Langfuse = MagicMock(return_value=fake_client)
         monkeypatch.setitem(__import__("sys").modules, "langfuse", fake_module)
 
         with trace_pipeline("call_abc") as handle:
-            assert handle.url == "https://us.cloud.langfuse.com/trace/trace_xyz"
+            assert handle.url.startswith("https://my-langfuse.local/trace/")
 
         reset_for_tests()
 
@@ -188,7 +205,9 @@ class TestLiveEventLogging:
         log_call_event("call_abc", "transcript", {"role": "user", "transcript": "hello"})
         kwargs = fake_span.update_trace.call_args.kwargs
         assert kwargs["session_id"] == "call_abc"
-        assert kwargs["name"] == "vapi:transcript"
+        # All observations for one call share the SAME trace name so they
+        # roll up cleanly into the call's single trace.
+        assert kwargs["name"].startswith("call:")
         assert "event:transcript" in kwargs["tags"]
 
     def test_log_call_event_attaches_input_fields(self, fake_langfuse):
@@ -216,14 +235,15 @@ class TestLiveEventLogging:
             pass
         kwargs = fake_span.update_trace.call_args.kwargs
         assert kwargs["session_id"] == "call_abc"
-        assert kwargs["name"] == "lookup_caller"
+        assert kwargs["name"].startswith("call:")
 
-    def test_trace_lookup_without_call_id_omits_session(self, fake_langfuse):
+    def test_trace_lookup_without_call_id_does_not_call_update_trace(self, fake_langfuse):
+        # When VAPI doesn't include call.id (e.g., direct curl test), we
+        # skip update_trace entirely — the span just lives as an orphan.
         _, fake_span = fake_langfuse
         with trace_lookup(None):
             pass
-        kwargs = fake_span.update_trace.call_args.kwargs
-        assert "session_id" not in kwargs
+        fake_span.update_trace.assert_not_called()
 
     def test_trace_lookup_yields_span_when_enabled(self, fake_langfuse):
         _, fake_span = fake_langfuse

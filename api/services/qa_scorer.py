@@ -1,13 +1,10 @@
 """LLM-scored QA rubric for completed calls.
 
-Each rubric item is judged independently as applicable or N/A. The final
-score is the weighted average over *applicable* items only, with the
-weights of skipped items redistributed across the rest. This keeps a clean
-call from being dragged down by criteria that never came up (e.g., a non-
-emergency call shouldn't lose points for `emergency_handling`).
-
-Returns `score = None` when every criterion is N/A so callers can
-distinguish "no signal" from "scored 0".
+Final score = weighted average over *applicable* items only; skipped
+items' weights are redistributed across the rest, so a clean call isn't
+dragged down by criteria that never came up (e.g., emergency_handling
+on a non-emergency call). Returns `score = None` when every criterion
+is N/A so callers can distinguish "no signal" from "scored 0".
 """
 
 import json

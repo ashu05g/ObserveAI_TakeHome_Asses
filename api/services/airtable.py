@@ -1,9 +1,8 @@
 """Airtable client for the `callers` and `interactions` tables.
 
-Reads config from environment variables on each call. A new httpx client is
-created per request because call volume is low and the overhead is dwarfed by
-the round-trip to Airtable; this also keeps the module trivially mockable in
-tests.
+A new httpx client is created per request — call volume is low and the
+overhead is dwarfed by the network round-trip; also keeps the module
+trivially mockable in tests.
 """
 
 import os

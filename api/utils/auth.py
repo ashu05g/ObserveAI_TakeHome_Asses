@@ -1,10 +1,6 @@
-"""Webhook header-token verification.
-
-VAPI is configured (Dashboard → Assistant → Server URL → Custom Headers) to
-send `X-VAPI-Secret: <random-string>` on every webhook. We compare in
-constant time to avoid timing oracles, and reject if the env var is empty
-to prevent accidental "no-secret-configured = always-pass" failures.
-"""
+"""Constant-time verification of the `X-VAPI-Secret` header configured in
+the VAPI dashboard. Rejects if the env var is empty so that a misconfigured
+deploy fails closed rather than open."""
 
 import hmac
 import os

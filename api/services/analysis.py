@@ -1,15 +1,8 @@
-"""Post-call intelligence pipeline.
+"""Post-call pipeline: analyze transcript -> QA score -> write to Airtable -> alert.
 
-Runs as a FastAPI BackgroundTask after the webhook returns 200 to VAPI.
-Orchestration:
-  1. extract transcript + Airtable caller link from the VAPI event
-  2. one LLM call: structured analysis (summary, sentiment, intent, ...)
-  3. one LLM call: QA rubric scoring
-  4. write the interaction row to Airtable
-  5. fire email alert iff QA < threshold or sentiment is negative
-
-A failure in any post-step is logged but not raised — there's no client
-left to return it to, and we want partial signal in Airtable over none.
+Runs as a FastAPI BackgroundTask once VAPI's end-of-call webhook returns 200.
+Failures in any step are logged and swallowed — there's no client to return
+them to, and partial signal in Airtable beats none.
 """
 
 import json
@@ -27,6 +20,7 @@ from api.services.qa_scorer import score_call
 from api.utils.prompts import load_prompt
 
 ALERT_QA_THRESHOLD = 0.6
+TOOL_RESULT_ROLES = ("tool_call_result", "tool", "function")
 
 logger = logging.getLogger(__name__)
 
@@ -142,22 +136,15 @@ def extract_transcript(event: VAPIEvent) -> str:
     return "\n".join(parts)
 
 
-TOOL_RESULT_ROLES = ("tool_call_result", "tool", "function")
-
-
 def extract_airtable_id(event: VAPIEvent) -> str | None:
-    """Walk the tool-call history backwards and return the airtable_record_id
-    from the most recent successful lookup_caller response, or None if no
-    such response is found (unauthenticated call).
+    """Pull `airtable_record_id` from the most recent successful lookup_caller
+    tool result, or None if no successful lookup is recorded on the call.
 
-    VAPI's tool-result message uses role=`tool_call_result` with the
-    stringified result in a `result` field. We also accept `tool` /
-    `function` for forward/backward compatibility with other VAPI
-    versions, and try `content` as a fallback location for the result
-    payload.
+    VAPI uses role=`tool_call_result` with the payload in a `result` field;
+    `tool` / `function` and `content` are accepted as fallbacks for other
+    VAPI versions.
     """
-    messages = event.call.messages
-    for msg in reversed(messages):
+    for msg in reversed(event.call.messages):
         if msg.role not in TOOL_RESULT_ROLES:
             continue
         if msg.name and msg.name != "lookup_caller":
@@ -170,7 +157,5 @@ def extract_airtable_id(event: VAPIEvent) -> str | None:
             except json.JSONDecodeError:
                 continue
         if isinstance(body, dict) and body.get("found") and body.get("airtable_record_id"):
-            logger.info("extract_airtable_id: matched record %s", body["airtable_record_id"])
             return body["airtable_record_id"]
-    logger.info("extract_airtable_id: no lookup_caller result found in %d messages", len(messages))
     return None

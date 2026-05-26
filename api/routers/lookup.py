@@ -1,11 +1,8 @@
 """Mid-call caller lookup tool.
 
-VAPI POSTs here with one or more `toolCalls`. We resolve each
-`lookup_caller` call and return the structured response VAPI expects.
-
-Per-call failures (bad phone format, caller not found, Airtable error)
-return `{found: false, ...}` rather than HTTP errors — VAPI's tool-call
-layer treats non-2xx as a hard error and aborts the call.
+VAPI POSTs here with one or more `toolCalls`. Per-call failures (bad phone,
+not found, Airtable error) return `{found: false, ...}` inside a 200 — VAPI
+treats non-2xx tool responses as hard errors that abort the call.
 """
 
 import json
@@ -51,10 +48,8 @@ async def lookup_caller(
 
             args = _parse_arguments(call.function.arguments)
             phone = args.get("phone")
-            # VAPI passes the `result` value into the LLM's tool-message
-            # content. We stringify so the LLM unambiguously sees a JSON
-            # string to parse; passing a dict has been observed to make
-            # VAPI drop the body and inject "Success." instead.
+            # `result` must be a string — a dict here causes VAPI to drop
+            # the body and inject "Success." for the LLM instead.
             result_dict = await _resolve_lookup(phone)
             results.append(VAPIToolResult(
                 tool_call_id=call.id,

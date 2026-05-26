@@ -1,8 +1,7 @@
 """VAPI function-tool request/response payloads.
 
-VAPI POSTs to the tool URL with a `message.toolCalls[]` array (each call has
-an id, function name, and arguments) and expects a `results[]` array back —
-each entry pairs the original toolCallId with the value the LLM should see.
+VAPI POSTs `message.toolCalls[]` and expects `results[]` back, pairing each
+original `toolCallId` with the value the LLM should see.
 """
 
 from typing import Any
@@ -25,9 +24,7 @@ class VAPIToolCall(BaseModel):
 
 
 class _CallInfo(BaseModel):
-    """Minimal call-info wrapper VAPI nests inside the tool-calls message,
-    used here only to surface the call.id for Langfuse session grouping."""
-
+    # Minimal wrapper — we only need call.id for Langfuse session grouping.
     model_config = ConfigDict(extra="ignore")
 
     id: str | None = None

@@ -1,10 +1,5 @@
-"""Phone number normalization to E.164.
-
-Callers say their numbers in many formats — Deepgram transcribes spoken
-digits to numerals, but punctuation, spacing, and country-code presence
-vary widely. We strip every non-digit and decide the format from the
-digit count.
-"""
+"""Phone number normalization to E.164 (US only). Strips all non-digits
+and decides the format from the digit count."""
 
 
 class InvalidPhoneNumber(ValueError):
