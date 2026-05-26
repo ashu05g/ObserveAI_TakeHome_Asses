@@ -115,12 +115,20 @@ sequenceDiagram
     A->>API: POST /lookup (X-VAPI-Secret)
     API->>API: normalize +14155550001
     API->>AT: filterByFormula
-    AT-->>API: {Jane Doe, claim approved, ...}
+    AT-->>API: {Jane Doe, DOB 1985-04-15,<br/>claim approved, ...}
     API-->>LF: span: lookup_caller<br/>input/output
     API-->>A: results[].result = JSON string
-    A->>C: "Am I speaking with Jane Doe?"
-    C->>A: "Yes"
-    A->>C: "Great — your claim has been approved..."
+    Note over A: agent has name + DOB in context<br/>but speaks none of it yet
+    A->>C: "To verify your identity, could you<br/>please confirm your full name<br/>and your date of birth?"
+    C->>A: "Jane Doe, April fifteenth<br/>nineteen eighty-five"
+    V->>H: transcript (user, final)
+    H-->>LF: log event
+    Note over A: silently match name (case-insensitive,<br/>fuzzy) + DOB (any spoken format)<br/>against tool result
+    A->>C: "Thank you for confirming, Jane."
+    C->>A: "What's my claim status?"
+    V->>H: transcript (user, final)
+    H-->>LF: log event
+    A->>C: "Great — your claim CLM 2024 0001<br/>has been approved..."
     C->>A: "Thanks, goodbye"
     V->>H: status-update (ended)
     H-->>LF: log event
@@ -136,7 +144,37 @@ sequenceDiagram
     P->>AT: write interaction row<br/>with langfuse_trace_url
 ```
 
-**Authentication note:** between the `/lookup` response and "Am I speaking with Jane Doe?", the agent actually performs a two-factor knowledge challenge — caller is asked to confirm their full name AND date of birth, and both must match the stored record before any claim information is disclosed. The agent never reveals stored values pre-verification. Full details in the AUTHENTICATION FLOW section of `prompts/agent_system_prompt.txt`. The `date_of_birth` field is at `api/models/caller.py:32-34` and is returned by `/lookup` at `api/routers/lookup.py:115`.
+## Authentication sub-flow
+
+Between steps 14–20 of the happy path above (`/lookup` returns → caller verified), the agent runs a two-factor knowledge challenge. Branching behavior:
+
+```mermaid
+flowchart TD
+    Start([/lookup returns found:true<br/>agent has name+DOB+claim<br/>in context, speaks none])
+    Ask[Agent: 'To verify your identity, could you<br/>please confirm your full name<br/>and your date of birth?']
+    Resp{What did the caller say?}
+    OnlyName[Agent: 'Could you also<br/>confirm your date of birth?']
+    OnlyDOB[Agent: 'Could you also<br/>confirm your full name?']
+    Match{Both match<br/>tool result?}
+    OK[Agent: 'Thank you for<br/>confirming, Jane.'<br/>→ CLAIM HANDLING]
+    Retry{First failure?}
+    Reprompt[Agent: 'That doesn't quite<br/>match our records. Could you<br/>say your full name and date of<br/>birth again, slowly?']
+    Escalate[Agent: 'For your security,<br/>I'm not able to verify your<br/>identity over this call. I'll<br/>arrange a callback...'<br/>→ END CALL]
+
+    Start --> Ask
+    Ask --> Resp
+    Resp -->|only name| OnlyName --> Resp
+    Resp -->|only DOB| OnlyDOB --> Resp
+    Resp -->|name + DOB| Match
+    Match -->|yes| OK
+    Match -->|no| Retry
+    Retry -->|yes — give one more chance| Reprompt --> Resp
+    Retry -->|no — second failure| Escalate
+```
+
+The mismatch path does **not** reveal which factor was wrong (security). DOB parsing is fuzzy and handles spoken formats like "April fifteenth nineteen eighty-five", "4/15/85", "fifteenth of April 1985", and numeric "4 15 1985". For ambiguous month-day order ("06/05/2000"), assume US (June 5) unless caller says day-first.
+
+Code references: `prompts/agent_system_prompt.txt` AUTHENTICATION FLOW section; `date_of_birth` model field at `api/models/caller.py:32-34`; returned by `/lookup` at `api/routers/lookup.py:115`; schema at `scripts/setup_airtable_schema.py` (`date_of_birth` field in `callers_schema`).
 
 ### Sequence → code map
 
@@ -193,6 +231,25 @@ The agent's branching prompt (`prompts/agent_system_prompt.txt`) checks the `fou
 | Airtable `interactions` | transcript, summary, sentiment, qa_score, qa_breakdown (JSON), topics_mentioned, escalated, caller link, langfuse_trace_url | Schema: `scripts/setup_airtable_schema.py`; write: `api/services/airtable.py:47-76`; model: `api/models/interaction.py:10-28` |
 | Email alerts (Resend) | low-QA-score (< 0.6) or negative-sentiment calls — subject + HTML body include caller name, QA score, summary, Langfuse link | Trigger: `api/services/analysis.py:87-102`; send: `api/services/email_alert.py:13-55`; severity threshold (HIGH < 0.5) at `api/services/email_alert.py:10` |
 | `scripts/inspect_call.py` | Manual diagnostic. Given a `call_id`, fetches `/call/{id}` from VAPI's REST API and dumps assistant config, message thread, every tool call with its actual result, and the transcript. | Lines 129-162 (`inspect`) |
+
+## Failure modes and recovery
+
+How the system behaves when VAPI, our backend, or an external service misbehaves. Each row names the failure, what actually happens today (with file:line citations), and what a production-hardening pass would add.
+
+| Failure | What VAPI does | What our code does today | Production fix |
+|---|---|---|---|
+| `/lookup` takes longer than VAPI's tool timeout (default ~30s) | Marks the tool call as failed; the LLM sees an error in the tool message slot and improvises a response | We set `timeout=10.0` on the httpx client (`api/services/airtable.py:17`); typical lookup is <500ms. If Airtable is slow we return 200 with `{found: false, error: "lookup service unavailable"}` at `api/routers/lookup.py:89-93`, so the agent sees a clean miss and re-prompts the caller instead of getting a tool-timeout error | Already adequate; could add `httpx` retries with backoff for transient Airtable errors |
+| `/lookup` returns a 5xx HTTP error | Treats non-2xx as a hard tool failure; aborts the call (depending on assistant config) | We **never return non-2xx for per-call errors** — every failure path returns 200 with structured `{found: false, error: "..."}` inside the result payload. Real 500s only happen on Python bugs and would be caught by uvicorn → Railway logs | OK as-is |
+| `/webhook` unreachable when end-of-call fires | VAPI retries with exponential backoff (typically 3–5 attempts over a few minutes) | The post-call pipeline is **not idempotent** — if the first attempt succeeds and the response is dropped, a retry attempt will write a second interaction row in Airtable | Add a unique-key constraint on `call.id` in the Airtable `interactions` table and a pre-write check; or generate the Airtable record ID deterministically from `call.id` |
+| `/webhook` malformed payload (Pydantic validation fails) | VAPI may retry depending on config | FastAPI returns 422 automatically via `VAPIWebhookPayload` validation at `api/routers/webhook.py:25`; no pipeline triggered | OK — payload shape is permissive (`extra="ignore"` at `api/models/webhook.py:18`), so this only fires on genuinely broken payloads |
+| Mid-call VAPI outage (telephony goes down during a call) | Caller hears silence then disconnect; VAPI eventually emits `end-of-call-report` with `endedReason: "vapi-failure"` or similar | We process the report normally, but the transcript will be partial — `extract_transcript` at `api/services/analysis.py:125-136` returns whatever fragments are present. If transcript is empty, the pipeline aborts cleanly at `api/services/analysis.py:32-33` | Surface partial calls as a separate metric on the dashboard so they can be reviewed manually |
+| Multiple concurrent calls | Each is a separate webhook hit | FastAPI on uvicorn handles concurrent requests via async event loop. The post-call pipeline is in-process (`BackgroundTask` at `api/routers/webhook.py:48`) — each call's pipeline runs independently in its own task | At ~100 concurrent calls Airtable's 5 req/sec/base rate limit becomes the first bottleneck. Migrate the data layer to Postgres (only `api/services/airtable.py` changes) and move pipeline execution to a Redis/RQ worker (function signature is already queueable) |
+| Caller pauses mid-number ("415 555 ... 0001") | VAPI's default endpointing decides the turn is over after 0.5s of silence | We override at `scripts/vapi_sync.py:144-151` — `onNumberSeconds: 3.0`, `onNoPunctuationSeconds: 2.0`. Defensive prompt also handles incomplete numbers: if `/lookup` returns a digit-count error the agent re-prompts (AUTHENTICATION FLOW step 3a in `prompts/agent_system_prompt.txt`) | OK as-is |
+| OpenAI rate-limit during post-call pipeline | n/a | `analyze_transcript` or `score_call` raises; the outer try/except at `api/services/analysis.py:60-62` logs with `logger.exception("pipeline: LLM step failed")` and aborts. No interaction row is written | Catch rate-limit specifically and write a partial row with just the transcript + `qa_score=None` so the call is logged even if scoring failed |
+| Airtable write failure (5xx, schema mismatch) | n/a | Logged at `api/services/analysis.py:84-85`; pipeline continues to the email-alert step (so alerts still fire even when Airtable is having a bad day) | Add a small file-backed dead-letter queue (write failed interaction JSON to disk on Railway) — Railway storage is ephemeral but a process-lifetime queue catches transient failures |
+| Email-send failure (Resend rate limit, network) | n/a | Logged at `api/services/analysis.py:101-102`; swallowed (alerts are best-effort) | Same dead-letter idea |
+| Langfuse SDK error (network, init failure) | n/a | Suppressed via `contextlib.suppress(Exception)` in `_flush` and `_set_call_trace_metadata` at `api/services/langfuse_client.py:118-129`, plus outer try/except in `log_call_event` at lines 194-195. **Observability never breaks the call.** | OK as-is |
+| VAPI tool call hits our /lookup before our app finishes cold-starting | Tool call times out | Railway containers stay warm under typical traffic; first request after a long idle pays ~2s spin-up. The lifespan validator at `api/main.py:34-43` warms the Langfuse client at boot to avoid first-request slowdown | Pre-warming on Railway via scheduled `/health` pings, or move to Fly.io / Render with always-on guarantees |
 
 ## Error capture points
 

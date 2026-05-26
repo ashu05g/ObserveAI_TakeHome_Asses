@@ -96,6 +96,18 @@ Pipeline body at `api/services/analysis.py:28-103`.
 
 App entry: `api/main.py:46` instantiates FastAPI; `api/main.py:34-43` defines the `lifespan` context manager that validates all 9 required env vars at startup (listed at `api/main.py:16-26`) and warms the Langfuse client.
 
+#### Backend choice — FastAPI vs n8n / Make.com
+
+The assignment lists n8n and Make.com as suggested integration platforms ("or custom framework of your choice"). We took the custom-framework path. Three things in this codebase would have been hard or impossible to build in a low-code workflow tool:
+
+1. **The `"async": False` + JSON-stringify response shape that fixed VAPI's "Success." bug.** The fix lives at `scripts/vapi_sync.py:72` (tool config) and `api/routers/lookup.py:56` (`json.dumps(result_dict)`). Neither setting is exposed in n8n's tool-call UI — we'd have hit the bug and had no surface to fix it from. The diagnostic that surfaced the bug (`scripts/inspect_call.py`) is also a standalone Python tool, not a workflow.
+
+2. **The QA scorer's N/A weight redistribution math** at `api/services/qa_scorer.py:88-105` (`weighted_score`). n8n's expression language can't cleanly filter+sum+renormalize a list of dicts. The realistic implementation in n8n would be a Code node containing the same Python — at which point we've kept Python and added a wrapper.
+
+3. **The single-trace-per-call Langfuse waterfall.** OpenTelemetry parent-context manipulation (`api/services/langfuse_client.py:103-110`) is not exposed in any low-code platform. The fallback — one Langfuse trace per webhook hit — is exactly the regression we worked through during the OTel refactor.
+
+Plus the 175-test pytest suite with HTTP-boundary mocking (`tests/test_*.py`), the constant-time HMAC verification at `api/utils/auth.py:13`, and Pydantic validation at every external boundary (`api/models/*.py`) have no equivalents in n8n. The trade-off was setup time — n8n would have shipped a *minimum-spec* demo faster — but not this one.
+
 ### Data — Airtable
 
 Two tables, schema and seed managed by scripts.
@@ -180,6 +192,26 @@ def should_alert(qa_score: float | None, sentiment: str) -> bool:
 ```
 
 `ALERT_QA_THRESHOLD = 0.6` at `api/services/analysis.py:22`. Severity tier (HIGH < 0.5 in subject line) at `api/services/email_alert.py:10` and `api/services/email_alert.py:21-25`.
+
+### QA Rubric — derivation and weights
+
+The 9-item rubric at `api/services/qa_scorer.py:17-63` is not invented; seven of the nine items map one-to-one to a specific capability the assignment prompt asks for, and the remaining two are standard items from contact-center QA programs (e.g., Verint, NICE, Calabrio rubrics all include them).
+
+| Rubric item | Weight | Source — assignment requirement or industry pattern |
+|---|---|---|
+| `greeting` (line 20-22) | 0.10 | Assignment's "calm, supportive, conversational tone" requirement — pre-authentication framing. Also a standard opening-quality item in contact-center QA. |
+| `authentication` (line 23-27) | 0.20 | Assignment requirement #1: "asks for the phone number associated with their account." Compliance-critical → high weight. |
+| `identity_confirm` (line 28-32) | 0.15 | Assignment requirement #1: confirming identity before disclosure. The implemented two-factor check (name + DOB) tests this directly. |
+| `claim_status_accurate` (line 33-37) | 0.20 | Assignment requirement #2: "retrieves and communicates the caller's claim status." Accuracy of the primary task → high weight. |
+| `documentation_instructions` (line 38-42) | 0.10 | Assignment requirement #2: "If the claim requires documentation, the agent provides clear instructions." |
+| `escalation_handling` (line 43-47) | 0.10 | Assignment requirement #4: "If the caller requests a representative, the assistant should politely confirm that a callback or transfer will be scheduled." |
+| `emergency_handling` (line 48-52) | 0.05 | Assignment requirement #4: "If the caller indicates an emergency, the assistant should instruct them to hang up and dial 911 immediately." Low weight because rare; N/A redistribution prevents this from dragging clean calls down. |
+| `scope_management` (line 53-57) | 0.05 | Assignment requirement #4: "If the caller asks unrelated questions, the assistant should briefly clarify what it is able to help with and guide the conversation back to the task." |
+| `tone` (line 58-62) | 0.05 | Standard contact-center QA item, also covers the assignment's "calm, supportive, conversational tone." Low weight because subjective and easier to game than the accuracy items. |
+
+**Weighting principle:** compliance-relevant items (`authentication` 0.20, `identity_confirm` 0.15) and accuracy items (`claim_status_accurate` 0.20) carry the most weight (0.55 combined). UX items (`greeting`, `tone`) and rare/conditional items (`emergency_handling`, `documentation_instructions`, `escalation_handling`, `scope_management`) carry the rest.
+
+**Why N/A redistribution matters here:** several items (`documentation_instructions`, `escalation_handling`, `emergency_handling`) only fire on specific call types. A clean approved-claim call doesn't trigger `documentation_instructions`. Without N/A redistribution (math at `api/services/qa_scorer.py:88-105`), every clean call would score ~80% because the non-applicable items would count as zeros. With redistribution, applicable weights are normalized to sum to 1.0 per call, so a clean call scoring perfectly on every applicable item gets 100%.
 
 ### Tests — 175 unit tests, HTTP-boundary mocking
 
