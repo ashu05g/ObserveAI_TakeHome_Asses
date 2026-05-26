@@ -37,3 +37,6 @@ desktop.ini
 
 # Logs
 *.log
+
+# Project
+tests/

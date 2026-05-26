@@ -52,6 +52,13 @@ def callers_schema() -> list[dict]:
             "type": "date",
             "options": {"dateFormat": {"name": "iso"}},
         },
+        # Identity verification factor: caller is challenged with this DOB
+        # during authentication (see prompts/agent_system_prompt.txt).
+        {
+            "name": "date_of_birth",
+            "type": "date",
+            "options": {"dateFormat": {"name": "iso"}},
+        },
         # Richer claim details so the agent can answer real caller questions
         # ("how much is my claim for?", "who's my adjuster?", "when will I be
         # paid?") without inventing values.

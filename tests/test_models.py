@@ -33,6 +33,7 @@ class TestCallerRecord:
             claim_status="approved",
             claim_type="auto",
             claim_date="2024-08-12",
+            date_of_birth="1985-04-15",
             incident_date="2024-08-10",
             claim_amount=8500,
             approved_amount=8000,
@@ -40,6 +41,7 @@ class TestCallerRecord:
             estimated_payout_date="2024-08-25",
             claim_description="Rear-end collision.",
         )
+        assert record.date_of_birth == date(1985, 4, 15)
         assert record.claim_amount == 8500
         assert record.approved_amount == 8000
         assert record.adjuster_name == "Robert Chen"
@@ -57,6 +59,7 @@ class TestCallerRecord:
             claim_type="auto",
             claim_date="2024-08-12",
         )
+        assert record.date_of_birth is None
         assert record.claim_amount is None
         assert record.adjuster_name is None
         assert record.documents_needed is None

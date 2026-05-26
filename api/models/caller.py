@@ -26,6 +26,10 @@ class CallerRecord(BaseModel):
     claim_type: ClaimType
     claim_date: date
 
+    # Identity verification factor — challenged during authentication
+    # (see prompts/agent_system_prompt.txt).
+    date_of_birth: date | None = None
+
     claim_amount: float | None = None
     approved_amount: float | None = None
     adjuster_name: str | None = None

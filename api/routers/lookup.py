@@ -108,6 +108,7 @@ async def _resolve_lookup(phone: str | None) -> dict:
         "found": True,
         "first_name": caller.first_name,
         "last_name": caller.last_name,
+        "date_of_birth": caller.date_of_birth.isoformat() if caller.date_of_birth else None,
         "claim_id": caller.claim_id,
         "claim_status": caller.claim_status,
         "claim_type": caller.claim_type,
